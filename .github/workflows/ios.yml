@@ -329,10 +329,10 @@ jobs:
             echo '|---|---|---|---|---|'
             echo "| \`Horizon-unsigned.ipa\` | $bytes | arm64 | \`$description\` | \`_horizon_probe\` linked |"
             echo
-            echo 'Unsigned, so it installs on no device, and it is not the game: `horizon-client` does not compile'
-            echo 'for this target yet. What runs on the phone when someone signs this is `crates/horizon-ios` --'
-            echo "Horizon's RNG, its HotSpot-exact math, palette packing and NBT codec -- answering four questions"
-            echo 'about the device it is on.'
+            echo 'Unsigned, so it installs on no device, and it is not the game: what runs on the phone when'
+            echo 'someone signs this is `crates/horizon-ios`, answering four questions about the device it is on.'
+            echo "Horizon's RNG, its HotSpot-exact math, palette packing and NBT codec, computed on the phone."
+            echo 'The game itself is built below, and its bundle is the artifact after this one.'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: steps.rust.outputs.required != 'false'
@@ -340,6 +340,111 @@ jobs:
           name: horizon-ios-unsigned-ipa
           path: Horizon-unsigned.ipa
           # Three days, like the archives: this is a check's evidence, not a release, and the next run replaces it.
+          retention-days: 3
+          if-no-files-found: error
+
+      # The game itself, on a phone. Everything above builds an app shell around four probes; this builds
+      # `horizon-client` for `aarch64-apple-ios` and puts the result in a bundle as its own executable.
+      #
+      # It is a `build` and not a `check`, and that is the whole reason for the step: `cargo check` stopped being
+      # the question the moment the crate table said the game type-checks for iOS. A bin's link is where a phone
+      # build finds out whether the frameworks a UIKit app needs are actually on the command line, and checking
+      # never links. It is `--release` because that is the profile players run, not a quicker one.
+      #
+      # There is no Xcode in this step on purpose. rustc emits an executable, and an .ipa is a zip of a folder
+      # iOS is willing to load, so the bundle is assembled here from packaging/ios/GameInfo.plist. The alternative
+      # was a second XcodeGen target whose only job is to copy a file Xcode was never needed to produce.
+      - name: Build the game itself for iPhone and iPad
+        if: steps.rust.outputs.required != 'false'
+        run: |
+          set -uo pipefail
+          # The same reading as the crate table's, for the same reason: one line for the summary, in a table cell.
+          first_error() {
+            local log="$1" found
+            for pattern in 'could not compile `[^`]+`' \
+                           'failed to run custom build command for `[^`]+`' \
+                           '^error(\[[A-Z0-9]+\])?: [^|]+'; do
+              found=$(grep -oE "$pattern" "$log" | head -1)
+              if [ -n "$found" ]; then printf '%s' "${found//|/\\|}"; return; fi
+            done
+            printf 'unknown'
+          }
+          {
+            echo '## The game, cross-compiled'
+            echo
+            echo '| Built | Links | Architecture | iOS marker | Rust | Frameworks |'
+            echo '|---|---|---|---|---|---|'
+          } >> "$GITHUB_STEP_SUMMARY"
+          log=ios-game-build.log
+          # Dropping the defaults is the only shape a phone can be given, and it is the shape the table above
+          # measured: no cpal output for a sound system iOS does not expose, no gilrs or hidapi for a controller
+          # stack that wants libudev. See packaging/ios/README.md for what plays sound and what reads a pad.
+          if cargo build --release --locked --target "$IOS_TARGET" -p horizon-client \
+              --no-default-features > "$log" 2>&1; then
+            bin="target/$IOS_TARGET/release/horizon-client"
+            if [ ! -x "$bin" ]; then
+              echo "::error::cargo said the game built and left no executable at $bin"
+              echo '| `horizon-client --no-default-features` | no | &mdash; | &mdash; | &mdash; | no executable |' \
+                >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            # The bundle: a Payload folder, the executable named `Horizon` for CFBundleExecutable to find, the
+            # plist that says what the executable is, and PkgInfo because macOS-era code still asks for it.
+            rm -rf game-payload
+            mkdir -p game-payload/Payload/Horizon.app
+            cp "$bin" game-payload/Payload/Horizon.app/Horizon
+            cp packaging/ios/GameInfo.plist game-payload/Payload/Horizon.app/Info.plist
+            printf 'APPL????' > game-payload/Payload/Horizon.app/PkgInfo
+            ( cd game-payload && zip -qry ../Horizon-game-unsigned.ipa Payload )
+            test -s Horizon-game-unsigned.ipa || { echo "::error::no game .ipa written"; exit 1; }
+            # Read the bundle the way the shell's was read: arm64, marked iOS, and Rust really in there. The game
+            # has no C entry point of its own to look for, so the symbol asked for is the crate's own -- mangled,
+            # and present because `main` is the bin's and everything else came from horizon_client.
+            executable=game-payload/Payload/Horizon.app/Horizon
+            arch=no
+            lipo "$executable" -verify_arch arm64 && arch=yes
+            marks=$(otool -l "$executable")
+            if printf '%s' "$marks" | grep -q LC_VERSION_MIN_IPHONEOS; then
+              description=LC_VERSION_MIN_IPHONEOS
+            elif printf '%s' "$marks" | grep -A3 LC_BUILD_VERSION | grep -qE 'platform +(2|IOS)( |$)'; then
+              description='LC_BUILD_VERSION platform 2'
+            else
+              description='absent: a phone would refuse to load this'
+              echo "::error::the game binary carries no iOS load marker"
+            fi
+            rust=no
+            nm "$executable" | grep -q horizon_client && rust=yes
+            # The frameworks are the part no `cargo check` could have told us and the part a phone acts on: an app
+            # that links no UIKit has no application to launch. Counted, and UIKit named, because that is the one
+            # this build cannot ask Xcode to add.
+            frameworks=$(otool -L "$executable")
+            count=$(printf '%s' "$frameworks" | grep -c '\.tbd\|\.dylib' || true)
+            uikit=no
+            printf '%s' "$frameworks" | grep -q 'UIKit.framework' && uikit=yes
+            bytes=$(stat -f %z Horizon-game-unsigned.ipa)
+            echo "| \`horizon-client --no-default-features\` | yes | arm64: $arch | \`$description\` | \`horizon_client\`: $rust | $count, UIKit: $uikit |" \
+              >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo
+              echo "That bundle is \`Horizon-game-unsigned.ipa\` ($bytes bytes): the executable the game builds,"
+              echo 'in a bundle with the plist the game ships. It is unsigned, so it installs on no phone, and it'
+              echo 'has no assets in it, because CI has no Minecraft jar to prepare and this repository must not'
+              echo 'ship one. Whether a phone handed both draws a frame is the next question, and it is one for a'
+              echo 'device and not for a runner.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            first=$(first_error "$log")
+            echo "::notice::the game does not build for ${IOS_TARGET}: ${first}"
+            echo "| \`horizon-client --no-default-features\` | no | &mdash; | &mdash; | &mdash; | ${first} |" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: steps.rust.outputs.required != 'false' && hashFiles('Horizon-game-unsigned.ipa') != ''
+        with:
+          name: horizon-ios-game-unsigned-ipa
+          path: Horizon-game-unsigned.ipa
+          # Logs from a failed link are the evidence when the answer is no, so the build log goes up with the
+          # bundle, in the same artifact name space as the crate table's logs.
           retention-days: 3
           if-no-files-found: error
 

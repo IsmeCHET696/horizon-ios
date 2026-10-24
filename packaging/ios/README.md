@@ -1,6 +1,6 @@
 # The iOS app shell: what Horizon's simulation says on an iPhone
 
-Three files and one crate, and none of them is the game.
+Three files and one crate make the app shell, and a fourth puts the game itself in a bundle beside it.
 
 - `project.yml`: the Xcode project, as an [XcodeGen](https://github.com/yonaskolb/XcodeGen) spec. Run
   `brew install xcodegen && xcodegen generate` in this folder to write `HorizonIOS.xcodeproj`, which is
@@ -9,6 +9,9 @@ Three files and one crate, and none of them is the game.
   `CURRENT_PROJECT_VERSION`. Bundle id `dev.horizon.ios`, iOS 16 or later, iPhone and iPad.
 - `Sources/main.m`: the app. One `AppDelegate`, one view controller, and no storyboard: it calls
   `horizon_probe()` in `viewDidLoad` and shows what came back in a monospaced text view.
+- `GameInfo.plist`: a second bundle's plist, for the `.ipa` whose executable is the cross-compiled
+  `horizon-client` rather than an app written here. Bundle id `dev.horizon.game`, and literal versions because no
+  Xcode substitutes anything. See "The second bundle" below.
 
 The Rust half is [`crates/horizon-ios`](../../crates/horizon-ios), whose header is
 `crates/horizon-ios/include/horizon_ios.h`. The project links it by name out of
@@ -55,6 +58,31 @@ between this bundle and a playable one:
 So this app runs the half that was already portable before the client was: `horizon-core`'s Java-accurate RNG
 and HotSpot-exact `Math`, its paletted block storage, and `horizon-world`'s NBT codec -- the four probes whose
 answers you can read on the screen, all of them computed on the phone rather than shipped to it.
+
+## The second bundle: the game, with no Xcode in its build
+
+`.github/workflows/ios.yml` uploads two `.ipa` files, because two things are being measured. `Horizon-unsigned.ipa`
+is the shell above. `Horizon-game-unsigned.ipa` is `horizon-client` itself:
+
+```sh
+cargo build --release --locked --target aarch64-apple-ios -p horizon-client --no-default-features
+rm -rf game-payload && mkdir -p game-payload/Payload/Horizon.app
+cp target/aarch64-apple-ios/release/horizon-client game-payload/Payload/Horizon.app/Horizon
+cp GameInfo.plist game-payload/Payload/Horizon.app/Info.plist
+printf 'APPL????' > game-payload/Payload/Horizon.app/PkgInfo
+( cd game-payload && zip -qry ../Horizon-game-unsigned.ipa Payload )
+```
+
+No `.xcodeproj` and no `xcodegen`: rustc produced an executable, and the rest is a folder layout iOS loads. The
+bundle id is `dev.horizon.game`, so the two install side by side. `GameInfo.plist` carries literal versions where
+`Info.plist` carries `$(MARKETING_VERSION)` for Xcode to fill in -- keep the two in step with `project.yml`.
+
+What that bundle cannot do yet, in the order it will be found: it has **no assets** (CI has no Minecraft jar to run
+`horizon-prepare` against, and this repository must not ship one; `UIFileSharingEnabled` in the plist is the
+deliberate door for the player to put the prepared folder where the game looks), and **no touch input** -- the first
+frame may be the whole show until something turns a tap into a key. The game starts in `$HOME/Documents`, which is
+why `saves/`, `options.txt` and `.horizon-cache` are where a player can reach them; see `crates/horizon-client/src/main.rs`
+`into_app_sandbox`.
 
 ## Why the game, when it comes, is the Cargo executable and not another static library
 

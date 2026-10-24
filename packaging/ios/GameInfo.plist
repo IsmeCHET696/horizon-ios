@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The game bundle's Info.plist, for the .ipa whose executable is the cross-compiled `horizon-client` binary.
+  Unlike packaging/ios/Info.plist this one carries no `$(MARKETING_VERSION)` placeholders: the game's bundle is
+  assembled by hand in .github/workflows/ios.yml (rustc emits an executable, and Xcode is never asked to), so
+  nothing substitutes for Xcode and the versions are written here. Keep them beside project.yml's.
+
+  There is no principal class, no nib and no storyboard, on purpose: winit 0.30's iOS backend passes its own
+  `UIApplicationDelegate` class to `UIApplicationMain`, and a delegate named here would replace the one the
+  game's window comes from.
+
+  UIFileSharingEnabled is the decided way assets arrive, prepared off-device and copied in by hand. It puts the
+  game's Documents folder (saves, `options.txt`, `.horizon-cache`) in the Files app on the phone, so the copy is
+  something a player can do with no developer tool attached.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Horizon</string>
+	<key>CFBundleExecutable</key>
+	<string>Horizon</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.horizon.game</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Horizon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>MinimumOSVersion</key>
+	<string>16.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Horizon is MIT licensed. Not an official Minecraft product; not approved by or associated with Mojang or Microsoft.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>metal</string>
+	</array>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

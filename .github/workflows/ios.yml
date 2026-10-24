@@ -444,12 +444,85 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@v4
-        if: steps.rust.outputs.required != 'false' && hashFiles('Horizon-game-unsigned.ipa') != ''
+        if: steps.rust.outputs.required != 'false'
         with:
-          name: horizon-ios-game-unsigned-ipa
-          path: Horizon-game-unsigned.ipa
-          # Logs from a failed link are the evidence when the answer is no, so the build log goes up with the
-          # bundle, in the same artifact name space as the crate table's logs.
+          name: horizon-ios-game
+          # The bundle when there is one, and the cargo log either way. The log is the half that matters when the
+          # answer is no: a link failure's evidence is the linker's own words, and a step that only uploads on
+          # success would keep exactly the output someone needs to read.
+          path: |
+            Horizon-game-unsigned.ipa
+            ios-game-build.log
           retention-days: 3
           if-no-files-found: error
+
+      # Both .ipa files are unsigned, so the only thing that can do anything with either is a person holding a
+      # signing certificate and the device. This step closes that distance: it posts whatever bundles the run built
+      # to a Discord channel, so watching the port is one notification instead of an artifact page, two downloads
+      # and a memory for which is which.
+      #
+      # The webhook lives in the repository secret DISCORD_IPA_WEBHOOK and not in this file, for the reason
+      # packaging/macos/README.md gives for the signing keychain: nothing secret goes in the repository, and a
+      # webhook URL is a credential -- anyone who reads one can post as this build. A fork without the secret gets
+      # a skipped step and a green run, because the portability tables above are the measurement this workflow
+      # exists for and they must not depend on someone's channel.
+      - name: Send the .ipa files to Discord
+        if: steps.rust.outputs.required != 'false' && env.DISCORD_IPA_WEBHOOK != ''
+        env:
+          DISCORD_IPA_WEBHOOK: ${{ secrets.DISCORD_IPA_WEBHOOK }}
+        run: |
+          set -uo pipefail
+          posts=()
+          number=0
+          for bundle in Horizon-unsigned.ipa Horizon-game-unsigned.ipa; do
+            [ -s "$bundle" ] || continue
+            # Never post Mojang's files. Neither bundle should carry any, because CI has no jar to prepare assets
+            # from, and this is the check that keeps that a fact rather than a hope: `horizon-resources.json` is
+            # the marker Options::read looks for beside the executable, so a bundle containing it is a bundle of
+            # prepared vanilla content. The repository already refuses to commit those (.githooks,
+            # tools/check_public_tree.py); posting one to a public channel is the same mistake with a wider
+            # audience and no git history to hide it in.
+            if unzip -l "$bundle" | grep -q horizon-resources.json; then
+              echo "::error::$bundle carries prepared vanilla assets; refusing to post it"
+              continue
+            fi
+            # Discord's multipart fields are file, file2, file3 -- not a repeated `file`. Numbering them here is
+            # what makes a run that built one bundle and a run that built two share this step.
+            number=$((number + 1))
+            field=file
+            [ "$number" -gt 1 ] && field="file$number"
+            posts+=(-F "$field=@$bundle;type=application/octet-stream")
+          done
+          if [ "$number" -eq 0 ]; then
+            echo 'This run built no .ipa to post.'
+            exit 0
+          fi
+          # The URL is the secret, so it is never echoed: curl's status code is asked for with -w and its body goes
+          # to a file, which is read only on the failure path and only after tokens are rubbed out.
+          # printf rather than a multi-line assignment: every continuation line of the latter would carry this
+          # step's own indentation into the message a person reads on their phone.
+          content=$(printf '%s\n' \
+            "**Horizon for iPhone and iPad, run #${GITHUB_RUN_NUMBER}**" \
+            "\`${GITHUB_REF_NAME}@${GITHUB_SHA::7}\`: $number unsigned .ipa, so nothing installs until someone signs it, and neither bundle carries assets" \
+            "🤖 Posted by heyskylo's AI agent (Qoder) from \`.github/workflows/ios.yml\`, not by a person.")
+          response=$(mktemp)
+          code=$(curl -sS -o "$response" -w '%{http_code}' -X POST "$DISCORD_IPA_WEBHOOK" \
+            -F "content=$content" "${posts[@]}")
+          case "$code" in
+            2*)
+              echo "Posted $number unsigned .ipa to Discord (HTTP $code)."
+              {
+                echo
+                echo "## Posted to Discord"
+                echo
+                echo "$number unsigned .ipa file(s), run \`#${GITHUB_RUN_NUMBER}\`, HTTP \`$code\`."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "::error::Discord refused the files (HTTP $code)"
+              sed -E 's/[A-Za-z0-9_-]{16,}/***masked***/g' "$response" | head -c 400
+              exit 1
+              ;;
+          esac
+          rm -f "$response"
 

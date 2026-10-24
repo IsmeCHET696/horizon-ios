@@ -377,8 +377,8 @@ jobs:
           {
             echo '## The game, cross-compiled'
             echo
-            echo '| Built | Links | Architecture | iOS marker | Rust | Frameworks |'
-            echo '|---|---|---|---|---|---|'
+            echo '| Built | Links | Architecture | iOS marker | Rust | Frameworks | Icon |'
+            echo '|---|---|---|---|---|---|---|'
           } >> "$GITHUB_STEP_SUMMARY"
           log=ios-game-build.log
           # Dropping the defaults is the only shape a phone can be given, and it is the shape the table above
@@ -389,7 +389,7 @@ jobs:
             bin="target/$IOS_TARGET/release/horizon-client"
             if [ ! -x "$bin" ]; then
               echo "::error::cargo said the game built and left no executable at $bin"
-              echo '| `horizon-client --no-default-features` | no | &mdash; | &mdash; | &mdash; | no executable |' \
+              echo '| `horizon-client --no-default-features` | no | &mdash; | &mdash; | &mdash; | no executable | &mdash; |' \
                 >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi
@@ -400,6 +400,25 @@ jobs:
             cp "$bin" game-payload/Payload/Horizon.app/Horizon
             cp packaging/ios/GameInfo.plist game-payload/Payload/Horizon.app/Info.plist
             printf 'APPL????' > game-payload/Payload/Horizon.app/PkgInfo
+            # The icon, before the zip. A springboard reads a compiled asset catalog and nothing else, and this
+            # bundle is assembled without Xcode, so actool -- the compiler Xcode calls -- is called directly.
+            # Failure is a warning rather than an error: a bundle with no icon is a cosmetic loss, and a step that
+            # turned it into a red run would hide the link verdict this step exists to report.
+            icon=not-compiled
+            if xcrun --sdk iphoneos actool \
+                --compile "$PWD/game-payload/Payload/Horizon.app" \
+                --platform iphoneos --minimum-deployment-target 16.0 \
+                --target-device iphone --target-device ipad \
+                --app-icon AppIcon \
+                --output-partial-info-plist "$RUNNER_TEMP/game-icon.plist" \
+                --errors --warnings --notices \
+                packaging/ios/Assets.xcassets > "$RUNNER_TEMP/actool.log" 2>&1 \
+               && [ -s game-payload/Payload/Horizon.app/Assets.car ]; then
+              icon=Assets.car
+            else
+              echo "::warning::actool compiled no Assets.car; the bundle will show a placeholder icon"
+              tail -20 "$RUNNER_TEMP/actool.log"
+            fi
             ( cd game-payload && zip -qry ../Horizon-game-unsigned.ipa Payload )
             test -s Horizon-game-unsigned.ipa || { echo "::error::no game .ipa written"; exit 1; }
             # Read the bundle the way the shell's was read: arm64, marked iOS, and Rust really in there. The game
@@ -427,7 +446,7 @@ jobs:
             uikit=no
             printf '%s' "$frameworks" | grep -q 'UIKit.framework' && uikit=yes
             bytes=$(stat -f %z Horizon-game-unsigned.ipa)
-            echo "| \`horizon-client --no-default-features\` | yes | arm64: $arch | \`$description\` | \`horizon_client\`: $rust | $count, UIKit: $uikit |" \
+            echo "| \`horizon-client --no-default-features\` | yes | arm64: $arch | \`$description\` | \`horizon_client\`: $rust | $count, UIKit: $uikit | $icon |" \
               >> "$GITHUB_STEP_SUMMARY"
             {
               echo
@@ -440,7 +459,7 @@ jobs:
           else
             first=$(first_error "$log")
             echo "::notice::the game does not build for ${IOS_TARGET}: ${first}"
-            echo "| \`horizon-client --no-default-features\` | no | &mdash; | &mdash; | &mdash; | ${first} |" \
+            echo "| \`horizon-client --no-default-features\` | no | &mdash; | &mdash; | &mdash; | ${first} | &mdash; |" \
               >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@v4

@@ -22,6 +22,8 @@
 	<string>Horizon</string>
 	<key>CFBundleExecutable</key>
 	<string>Horizon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.horizon.game</string>
 	<key>CFBundleInfoDictionaryVersion</key>

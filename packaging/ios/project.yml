@@ -28,6 +28,11 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: 16.0
     ENABLE_STRICT_OBJC_MSGSEND: YES
     GCC_NO_COMMON_BLOCKS: YES
+    # Both bundles take their icon from Assets.xcassets. Xcode compiles the catalog into the app's
+    # Assets.car; the plist names it, because these targets write their own Info.plist rather than
+    # having one generated (GENERATE_INFOPLIST_FILE: NO), and a generated plist is where Xcode would
+    # otherwise add CFBundleIconName for you.
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 targets:
   Horizon:
     type: application
@@ -35,6 +40,7 @@ targets:
     productName: Horizon
     sources:
       - path: Sources
+      - path: Assets.xcassets
     settings:
       base:
         INFOPLIST_FILE: Info.plist

@@ -120,7 +120,8 @@ jobs:
               ( cd "$dir" && ar x "$GITHUB_WORKSPACE/$archive" "$member" )
               object="$dir/$member"
               test -f "$object" || { echo "::error::$(basename "$archive") yielded no $member"; exit 1; }
-              lipo -verify_arch arm64 "$object" >/dev/null \
+              # lipo wants the file before the command, unlike most tools: `lipo file -verify_arch arm64`.
+              lipo "$object" -verify_arch arm64 >/dev/null \
                 || { echo "::error::$(basename "$archive") is not arm64"; exit 1; }
             done
             # arm64 Mach-O alone is what a macOS build produces as well, so the platform is what makes this a

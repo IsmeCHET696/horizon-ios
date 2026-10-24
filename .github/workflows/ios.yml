@@ -1,22 +1,26 @@
 name: ios
-# Two things, in this order: how much of Horizon compiles for iPhone and iPad, measured on every pull request and
-# every push to main, and an unsigned .ipa for the app shell that links the crates which already do.
-# Nothing here is a playable game: the iOS port is unscheduled and the client does not build for a phone today.
+# Three things, in this order: how much of Horizon compiles for iPhone and iPad, measured on every pull request and
+# every push to main; an unsigned .ipa for the app shell that links the crates which already do; and an unsigned .ipa
+# carrying the game itself, cross-compiled and bundled with no Xcode in the way. Both files are then posted to
+# Discord (repository secret DISCORD_IPA_WEBHOOK), because an artifact no CI can install has to reach a hand some
+# other way. Nothing here is a playable game yet, and the port is unscheduled.
 # The measurement is one line per crate, so that a crate moving from broken to building shows up as a number that
 # changes, and it publishes the archives for the crates that are already iOS-clean. Everything runs in one job on
 # one machine: a matrix would multiply the macOS minutes this repository pays for, and every step shares one
 # target/ cache anyway.
 # Read the tables in the run's summary before deciding what a port costs. The short version, as this workflow
-# measured it on its own runner (macOS 14, rustc stable, 2026-10-24): all but two of the crates it attempts check
-# clean for aarch64-apple-ios, including the whole simulation (horizon-core, horizon-world: worldgen, NBT,
-# blocks, entities, physics), the asset decoders, the protocol, and the server's own code. Two do not. The client
-# stops inside a dependency of its own: `arboard` treats iOS as a Linux desktop and drags the whole Wayland stack
-# into a phone build, which cannot compile for the target (cargo tree --target aarch64-apple-ios
-# -i wayland-backend shows arboard -> wl-clipboard-rs -> wayland-*), and `horizon-dualsense` stops in hidapi's
-# build script, which is the crate that rumbles a DualSense over USB and has no business on a phone anyway.
-# The .ipa at the end is unsigned, so it installs on no device, and it carries the simulation rather than the game:
-# crates/horizon-ios is the crate an Objective-C main() calls, and packaging/ios/project.yml is the Xcode project
-# that links it. Sign it with any Apple developer account and it runs on an iPhone.
+# measured it on its own runner (macOS 14, rustc stable, 2026-10-24): every crate but two checks clean for
+# aarch64-apple-ios, including the whole simulation (horizon-core, horizon-world: worldgen, NBT, blocks, entities,
+# physics), the asset decoders, the protocol, and the server's own code. The two are the controller stack, and they
+# are the same failure: `horizon-dualsense`, and `horizon-client` with a desktop build's features, both stop in
+# hidapi's build script -- the crate that rumbles a DualSense over USB, which has no business on a phone. Drop the
+# defaults and the client checks clean, features and all: it used to stop inside `arboard`, which treats iOS as a
+# Linux desktop and drags the whole Wayland stack into a phone build, and that is now gated to the four targets with
+# a backend (crates/horizon-client/Cargo.toml).
+# The first .ipa is the shell: crates/horizon-ios is the crate an Objective-C main() calls, and
+# packaging/ios/project.yml is the Xcode project that links it. The second is `horizon-client` built for the target
+# and put in a Payload folder with packaging/ios/GameInfo.plist, because rustc emits an executable and an iPhone
+# loads one. Both are unsigned, so neither installs on a device without signing, and neither has any assets in it.
 # Compiling for a phone and running on one are separate problems, and the tables below say which is which.
 on:
   push:
@@ -40,7 +44,8 @@ env:
   # runtime (docs/mods.md:129 names wasmi as the no-JIT path, and no interpreter or precompiled one exists in the
   # workspace yet); horizon-prepare, which also checks clean but shells out to javac and java against the player's
   # own Minecraft install (crates/horizon-prepare/src/java.rs:5-7), so it can only ever run where a JDK and that
-  # install exist; and horizon-client, which does not check clean at all. The rest -- horizon-bench,
+  # install exist; and horizon-client, which checks clean only with `--no-default-features` and is built as the
+  # game's own executable further down rather than archived for someone else to link. The rest -- horizon-bench,
   # horizon-friends, horizon-mod-sdk, horizon-port-pack, horizon-relay, horizon-release-sign, horizon-server,
   # horizon-server-files and horizon-telemetry -- pass the per-crate pass below and have earned their place here
   # once something on a phone needs what they do: an app shell wants the simulation and the decoders first, and

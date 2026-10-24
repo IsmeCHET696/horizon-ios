@@ -5,15 +5,15 @@ name: ios
 # building shows up as a number that changes, and to publish the archives for the crates that are already iOS-clean
 # so an app shell can link against them. Everything runs in one job on one machine: a matrix would multiply the
 # macOS minutes this repository pays for, and both halves share one target/ cache anyway.
-# Read the two tables in the run's summary before deciding what a port costs. The short version, measured
-# 2026-10-24 on x86-64 Linux with the aarch64-apple-ios target: thirteen of the workspace's twenty crates check
-# clean for a phone, including the whole simulation (horizon-core, horizon-world: worldgen, NBT, blocks, entities,
-# physics) and the asset decoders (horizon-assets). The client stops inside its own dependencies, because `arboard`
-# treats iOS as a Linux desktop and drags the whole Wayland stack in with it (cargo tree --target
-# aarch64-apple-ios -i wayland-backend shows arboard -> wl-clipboard-rs -> wayland-*). The other six failures stop
-# at a C build script (ring, hidapi) that only an Apple toolchain can answer for: those crates have no verdict
-# until this workflow runs on a Mac, which is the reason it does.
-# Running on a phone is a separate problem from compiling for one, and the tables below say which is which.
+# Read the two tables in the run's summary before deciding what a port costs. The short version, as this workflow
+# measured it on its own runner (macOS 14, rustc stable, 2026-10-24): eighteen of the workspace's twenty crates
+# check clean for aarch64-apple-ios, including the whole simulation (horizon-core, horizon-world: worldgen, NBT,
+# blocks, entities, physics), the asset decoders, the protocol, and the server's own code. Two do not. The client
+# stops inside a dependency of its own: `arboard` treats iOS as a Linux desktop and drags the whole Wayland stack
+# into a phone build, which cannot compile for the target (cargo tree --target aarch64-apple-ios
+# -i wayland-backend shows arboard -> wl-clipboard-rs -> wayland-*), and `horizon-dualsense` stops in hidapi's
+# build script, which is the crate that rumbles a DualSense over USB and has no business on a phone anyway.
+# Compiling for a phone and running on one are separate problems, and the tables below say which is which.
 on:
   push:
     branches: [main]
@@ -36,10 +36,11 @@ env:
   # runtime (docs/mods.md:129 names wasmi as the no-JIT path, and no interpreter or precompiled one exists in the
   # workspace yet); horizon-prepare, which also checks clean but shells out to javac and java against the player's
   # own Minecraft install (crates/horizon-prepare/src/java.rs:5-7), so it can only ever run where a JDK and that
-  # install exist; horizon-bench, horizon-friends, horizon-mod-sdk, horizon-relay and horizon-client, which need no
-  # mention here because the pass below reports them; and horizon-server-files, horizon-telemetry,
-  # horizon-release-sign, horizon-port-pack, horizon-dualsense and horizon-server, which stopped at a C build
-  # script on the machine that measured them and are not claimed as portable until an Apple toolchain says so.
+  # install exist; and horizon-client, which does not check clean at all. The rest -- horizon-bench,
+  # horizon-friends, horizon-mod-sdk, horizon-port-pack, horizon-relay, horizon-release-sign, horizon-server,
+  # horizon-server-files and horizon-telemetry -- pass the per-crate pass below and have earned their place here
+  # once something on a phone needs what they do: an app shell wants the simulation and the decoders first, and
+  # friends' port mapping, the load bots and the signing keys are not a phone's work.
   PORTABLE: horizon-core horizon-world horizon-threads horizon-assets horizon-protocol horizon-theme
 
 jobs:
@@ -115,7 +116,7 @@ jobs:
             test "$objects" -gt 0 || { echo "::error::$(basename "$archive") holds no objects"; exit 1; }
             dir=$(mktemp -d)
             # Three of them, not all: an archive holds every crate linked into it as well (horizon-core's carries
-            # 394 objects), and they all came off one compiler invocation targeting one platform.
+            # close on four hundred objects), and they all came off one compiler invocation targeting one platform.
             for member in $(ar t "$archive" | grep '\.o$' | head -3); do
               ( cd "$dir" && ar x "$GITHUB_WORKSPACE/$archive" "$member" )
               object="$dir/$member"

@@ -13,6 +13,12 @@ name: HorizonIOS
 options:
   pathBase: project
   createIntermediateGroups: true
+  # Pinned, because the current XcodeGen default writes a project file a older Xcode cannot open: the
+  # iOS workflow's runner is Xcode 15.4 and its default gave format 77, which 15.4 refuses with
+  # "Unable to read project". Any newer Xcode reads a 15.3 project happily, so this is the format
+  # that costs nothing and works everywhere; raise it when the workflow's runner moves.
+  projectFormat: xcode15_3
+  xcodeVersion: "15.4"
   deploymentTarget:
     iOS: "16.0"
 settings:

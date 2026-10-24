@@ -142,8 +142,10 @@ fn report() -> String {
     out
 }
 
-/// Runs Horizon's random draws, math, palette packing and NBT codec on this device and writes the
-/// result into `out` as UTF-8, NUL-terminated, returning the byte count without the NUL.
+/// Runs Horizon's random draws, math, palette packing and NBT codec on this device, writing the
+/// result into `out` as NUL-terminated UTF-8 and returning the byte count without the NUL. A
+/// negative return is an error code, never a length: an app that printed one as a count would report
+/// that an honest simulation core had written nothing at all.
 ///
 /// Returns -1 when `cap` is under `MAX_REPORT` or `out` is null, and -2 when the report would not
 /// have fitted, which cannot happen today but keeps the caller honest about the buffer it passed.

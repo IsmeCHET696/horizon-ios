@@ -243,6 +243,11 @@ jobs:
         run: |
           set -euo pipefail
           command -v xcodegen >/dev/null || brew install xcodegen
+          # Two versions this step can only learn by asking, and both decide whether the project file it is about
+          # to generate can be opened: Homebrew installs the newest XcodeGen, and a hosted Mac image answers with
+          # whichever Xcode it happens to select. Name them in the log before anything depends on them agreeing.
+          xcodegen --version
+          xcodebuild -version
           # The archive the app links, built here rather than added to $PORTABLE: being linked from Objective-C is
           # this crate's whole job, it has not passed the per-crate pass above on a Mac yet, and no other target
           # needs it. One staticlib, one app.

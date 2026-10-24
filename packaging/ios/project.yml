@@ -1,0 +1,50 @@
+# Horizon's iOS app shell, as an XcodeGen spec.
+#
+# Xcode does not like being edited in source control, so the repository keeps this file and
+# `xcodegen` writes HorizonIOS.xcodeproj from it:
+#   brew install xcodegen && cd packaging/ios && xcodegen generate
+# Generating from this directory matters: $(SRCROOT) below is this directory.
+#
+# The Rust half is not an Xcode dependency: `cargo` cross-compiles it into one static archive and the
+# linker picks it up by name from the search path, so a fresh clone with no archive still generates a
+# project. Building that project fails at the link step, which is the honest error, and
+# .github/workflows/ios.yml is what runs both halves in order.
+name: HorizonIOS
+options:
+  pathBase: project
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    MARKETING_VERSION: 0.1.0
+    CURRENT_PROJECT_VERSION: 1
+    IPHONEOS_DEPLOYMENT_TARGET: 16.0
+    ENABLE_STRICT_OBJC_MSGSEND: YES
+    GCC_NO_COMMON_BLOCKS: YES
+targets:
+  Horizon:
+    type: application
+    platform: iOS
+    productName: Horizon
+    sources:
+      - path: Sources
+    settings:
+      base:
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_BUNDLE_IDENTIFIER: dev.horizon.ios
+        PRODUCT_NAME: Horizon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # The crate's C header, kept beside the Rust it describes so the two cannot drift apart.
+        HEADER_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/../../crates/horizon-ios/include
+        LIBRARY_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/../../target/aarch64-apple-ios/release
+        # -lhorizon_ios, not a file reference: the archive is Cargo's output, its path depends on
+        # the profile, and Xcode would otherwise want it checked in.
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -lhorizon_ios

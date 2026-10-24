@@ -1,18 +1,22 @@
 name: ios
-# How much of Horizon compiles for iPhone and iPad, measured on every pull request and every push to main.
+# Two things, in this order: how much of Horizon compiles for iPhone and iPad, measured on every pull request and
+# every push to main, and an unsigned .ipa for the app shell that links the crates which already do.
 # Nothing here is a playable game: the iOS port is unscheduled and the client does not build for a phone today.
-# This workflow's job is to measure the distance: one line per crate, so that a crate moving from broken to
-# building shows up as a number that changes, and to publish the archives for the crates that are already iOS-clean
-# so an app shell can link against them. Everything runs in one job on one machine: a matrix would multiply the
-# macOS minutes this repository pays for, and both halves share one target/ cache anyway.
-# Read the two tables in the run's summary before deciding what a port costs. The short version, as this workflow
-# measured it on its own runner (macOS 14, rustc stable, 2026-10-24): eighteen of the workspace's twenty crates
-# check clean for aarch64-apple-ios, including the whole simulation (horizon-core, horizon-world: worldgen, NBT,
+# The measurement is one line per crate, so that a crate moving from broken to building shows up as a number that
+# changes, and it publishes the archives for the crates that are already iOS-clean. Everything runs in one job on
+# one machine: a matrix would multiply the macOS minutes this repository pays for, and every step shares one
+# target/ cache anyway.
+# Read the tables in the run's summary before deciding what a port costs. The short version, as this workflow
+# measured it on its own runner (macOS 14, rustc stable, 2026-10-24): all but two of the crates it attempts check
+# clean for aarch64-apple-ios, including the whole simulation (horizon-core, horizon-world: worldgen, NBT,
 # blocks, entities, physics), the asset decoders, the protocol, and the server's own code. Two do not. The client
 # stops inside a dependency of its own: `arboard` treats iOS as a Linux desktop and drags the whole Wayland stack
 # into a phone build, which cannot compile for the target (cargo tree --target aarch64-apple-ios
 # -i wayland-backend shows arboard -> wl-clipboard-rs -> wayland-*), and `horizon-dualsense` stops in hidapi's
 # build script, which is the crate that rumbles a DualSense over USB and has no business on a phone anyway.
+# The .ipa at the end is unsigned, so it installs on no device, and it carries the simulation rather than the game:
+# crates/horizon-ios is the crate an Objective-C main() calls, and packaging/ios/project.yml is the Xcode project
+# that links it. Sign it with any Apple developer account and it runs on an iPhone.
 # Compiling for a phone and running on one are separate problems, and the tables below say which is which.
 on:
   push:
@@ -49,8 +53,8 @@ jobs:
     # for everyone else. aarch64-apple-ios needs no Xcode project: rustc cross-compiles, and the steps below
     # check the objects it produced really are arm64 iOS.
     runs-on: ${{ vars.MAC_RUNNER || 'macos-14' }}
-    # Six static archives plus twenty crate checks, from a cold cache on the first run: nothing here is quick, and
-    # a run that is killed at the halfway point reports no portability table at all.
+    # Six static archives, twenty-one crate checks, and an Xcode build and link, from a cold cache on the first
+    # run: nothing here is quick, and a run killed at the halfway point reports no portability table at all.
     timeout-minutes: 90
     defaults:
       run:
@@ -159,7 +163,7 @@ jobs:
             horizon-core horizon-world horizon-threads horizon-assets horizon-protocol horizon-theme
             horizon-bench horizon-friends horizon-relay horizon-mod-sdk horizon-mods horizon-server-files
             horizon-telemetry horizon-release-sign horizon-port-pack horizon-dualsense horizon-bots
-            horizon-server horizon-prepare horizon-client
+            horizon-server horizon-prepare horizon-client horizon-ios
         run: |
           set -uo pipefail
           # The one line that says what stopped a crate. Order matters: cargo prints the compiler's individual
@@ -225,3 +229,84 @@ jobs:
           # against them to show what moving one crate forward actually cost.
           retention-days: 30
           if-no-files-found: error
+
+      # The app shell, and the last step because everything above is the measurement this workflow was written
+      # for and must reach the summary even if an Xcode build breaks. packaging/ios/project.yml is an XcodeGen
+      # spec: the repository keeps a text description of the project, and xcodegen writes the .xcodeproj from it
+      # here. The project links one Rust archive, and the app's only job is to call horizon_probe() and print what
+      # Horizon's simulation answers on the device it is running on.
+      # The .ipa is UNSIGNED: it installs on no phone, and saying so is the point of publishing it. What it proves
+      # is the chain -- Cargo's arm64 objects, an Objective-C caller, a linker, a bundle, a Payload archive -- so
+      # that the only thing between this artifact and a hand is a developer certificate, not a toolchain.
+      - name: Build the unsigned .ipa
+        if: steps.rust.outputs.required != 'false'
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          # The archive the app links, built here rather than added to $PORTABLE: being linked from Objective-C is
+          # this crate's whole job, it has not passed the per-crate pass above on a Mac yet, and no other target
+          # needs it. One staticlib, one app.
+          cargo rustc --release --locked --target "$IOS_TARGET" -p horizon-ios --lib --crate-type staticlib
+          archive="target/$IOS_TARGET/release/libhorizon_ios.a"
+          test -s "$archive" || { echo "::error::horizon-ios built no archive for the app to link"; exit 1; }
+          # From the spec's own directory, which is what $(SRCROOT) in project.yml is written to mean.
+          ( cd packaging/ios && xcodegen generate )
+          # -sdk iphoneos, not the simulator: this is a build for the metal in a phone. CODE_SIGNING_ALLOWED=NO
+          # with no identity is what makes it buildable without an Apple account. xcodebuild's own log is left on
+          # the step, because the first few runs of this step will be read by someone debugging a project file.
+          xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
+            -target Horizon -configuration Release -sdk iphoneos -arch arm64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/build-ios" \
+            build
+          app=build-ios/Horizon.app
+          test -d "$app" || { echo "::error::xcodebuild produced no Horizon.app"; exit 1; }
+          test -x "$app/Horizon" || { echo "::error::Horizon.app carries no executable"; exit 1; }
+          # An .ipa is a zip whose every entry sits under Payload/.
+          rm -rf ipa
+          mkdir -p ipa/Payload
+          cp -a "$app" ipa/Payload/
+          ( cd ipa && zip -qry ../Horizon-unsigned.ipa Payload )
+          test -s Horizon-unsigned.ipa || { echo "::error::no .ipa written"; exit 1; }
+      # The bundle's binary is the file a phone loads, so it gets the same reading as the archives above, plus one
+      # the archives could not give: that the Rust probe is really linked into it, which is the difference between
+      # an archive that was present at link time and one that the app can call.
+      - name: The .ipa is an arm64 iOS bundle with Rust in it
+        if: steps.rust.outputs.required != 'false'
+        run: |
+          set -euo pipefail
+          binary=build-ios/Horizon.app/Horizon
+          lipo "$binary" -verify_arch arm64 || { echo "::error::Horizon is not arm64"; exit 1; }
+          marks=$(otool -l "$binary")
+          if printf '%s' "$marks" | grep -q LC_VERSION_MIN_IPHONEOS; then
+            description=LC_VERSION_MIN_IPHONEOS
+          elif printf '%s' "$marks" | grep -A3 LC_BUILD_VERSION | grep -qE 'platform +(2|IOS)( |$)'; then
+            description='LC_BUILD_VERSION platform 2'
+          else
+            echo "::error::Horizon is not marked iOS; a phone would refuse to load it"; exit 1
+          fi
+          nm "$binary" | grep -q _horizon_probe \
+            || { echo "::error::the app links no Rust: horizon_probe is absent from the binary"; exit 1; }
+          plutil -lint build-ios/Horizon.app/Info.plist >/dev/null
+          bytes=$(stat -f %z Horizon-unsigned.ipa)
+          {
+            echo '## Unsigned .ipa'
+            echo
+            echo "| File | Bytes | Architecture | iOS marker | Rust |"
+            echo '|---|---|---|---|---|'
+            echo "| \`Horizon-unsigned.ipa\` | $bytes | arm64 | \`$description\` | \`_horizon_probe\` linked |"
+            echo
+            echo 'Unsigned, so it installs on no device, and it is not the game: `horizon-client` does not compile'
+            echo 'for this target yet. What runs on the phone when someone signs this is `crates/horizon-ios` --'
+            echo "Horizon's RNG, its HotSpot-exact math, palette packing and NBT codec -- answering four questions"
+            echo 'about the device it is on.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: steps.rust.outputs.required != 'false'
+        with:
+          name: horizon-ios-unsigned-ipa
+          path: Horizon-unsigned.ipa
+          # Three days, like the archives: this is a check's evidence, not a release, and the next run replaces it.
+          retention-days: 3
+          if-no-files-found: error
+

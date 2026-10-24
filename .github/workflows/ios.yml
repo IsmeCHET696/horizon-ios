@@ -475,6 +475,57 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+      # The same game in a bundle Xcode builds, which is the half a person with a phone actually needs: signing and
+      # provisioning come from pressing Run, and no shell script here produces either.
+      # packaging/ios/project.yml gives that target a placeholder main.m, a Cargo phase and a post-compile copy, so
+      # this step is the check that the copy really happened -- `cmp` against Cargo's own output, because a bundle
+      # called HorizonGame.app is indistinguishable from one whose executable was never replaced, and only one of
+      # them has a game in it.
+      - name: The Xcode game target wraps the Rust binary
+        if: steps.rust.outputs.required != 'false'
+        run: |
+          set -euo pipefail
+          # The project is regenerated rather than reused: the step above generated it while the spec had one target
+          # in it, and a second target needs a fresh read.
+          ( cd packaging/ios && xcodegen generate )
+          # CODE_SIGNING_ALLOWED=NO, so this proves the bundle's contents and not a signature nobody here holds.
+          # The Cargo phase inside the target is a no-op: the step above built the same profile for the same target
+          # in the same workspace, which is why this step takes seconds and not the ten minutes a cold build costs.
+          log=xcode-game-build.log
+          if ! xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
+              -target HorizonGame -configuration Release -sdk iphoneos -arch arm64 \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
+              CONFIGURATION_BUILD_DIR="$PWD/build-ios" \
+              build > "$log" 2>&1; then
+            echo "::error::xcodebuild could not build the game target"
+            tail -40 "$log"
+            exit 1
+          fi
+          app=build-ios/HorizonGame.app
+          test -d "$app" || { echo "::error::the game target produced no HorizonGame.app"; exit 1; }
+          # The claim of the whole target, checked byte for byte.
+          cmp "$app/Horizon" "target/$IOS_TARGET/release/horizon-client" \
+            || { echo "::error::HorizonGame.app's executable is not the Rust game: the copy phase did not stick"; exit 1; }
+          # The icon and the plist, both produced by the toolchain this time rather than by hand: a mistake in
+          # project.yml shows up here, and not on somebody's home screen.
+          test -s "$app/Assets.car" || { echo "::error::the game target compiled no Assets.car"; exit 1; }
+          bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+          [ "$bundle" = dev.horizon.game ] \
+            || { echo "::error::the game target's bundle id is $bundle, not dev.horizon.game"; exit 1; }
+          plutil -lint "$app/Info.plist" >/dev/null
+          {
+            echo
+            echo '## The game target in Xcode'
+            echo
+            echo '| Bundle | Executable | Icon | Bundle id |'
+            echo '|---|---|---|---|'
+            echo "| \`HorizonGame.app\` | byte for byte Cargo's \`horizon-client\` | \`Assets.car\` | \`$bundle\` |"
+            echo
+            echo 'Open `packaging/ios/HorizonIOS.xcodeproj`, pick the **Horizon game** scheme and your phone, sign'
+            echo 'with your own Apple ID and press Run: the target builds the game with Cargo, replaces its own'
+            echo 'placeholder executable with the result, and Xcode signs whatever is left.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # Both .ipa files are unsigned, so the only thing that can do anything with either is a person holding a
       # signing certificate and the device. This step closes that distance: it posts whatever bundles the run built
       # to a Discord channel, so watching the port is one notification instead of an artifact page, two downloads

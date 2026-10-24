@@ -84,6 +84,52 @@ frame may be the whole show until something turns a tap into a key. The game sta
 why `saves/`, `options.txt` and `.horizon-cache` are where a player can reach them; see `crates/horizon-client/src/main.rs`
 `into_app_sandbox`.
 
+## Running it on a phone
+
+An unsigned `.ipa` installs nowhere, so the route that works today is the one Xcode signs for you. `project.yml`
+has two application targets and two schemes:
+
+| Scheme | Bundle id | Executable | What it is |
+|---|---|---|---|
+| **Horizon shell** | `dev.horizon.ios` | Objective-C + `libhorizon_ios.a` | the four probes, printed on screen |
+| **Horizon game** | `dev.horizon.game` | Cargo's `horizon-client` | the game |
+
+```sh
+rustup target add aarch64-apple-ios
+brew install xcodegen
+cd packaging/ios && xcodegen generate && open HorizonIOS.xcodeproj
+```
+
+Pick **Horizon game**, choose your device, set a signing team on the target, and press Run. The target's first
+build phase runs `cargo build --release --target aarch64-apple-ios -p horizon-client --no-default-features`;
+Xcode then links a placeholder `GameShell/main.m` so the bundle has an executable, and a phase after it
+overwrites that file with Cargo's binary -- which is what the signature then covers. rustc cannot emit a library
+from a bin target and `Game` is bin-only code, so this is the only shape that gets the game into a signed bundle
+without moving 30k lines into the library. `.github/workflows/ios.yml` builds the same target with
+`CODE_SIGNING_ALLOWED=NO` and `cmp`s the bundle's executable against Cargo's, so "the copy stuck" is a checked
+claim and not an assumption.
+
+**If you open the shell and see the probe report, that is the other target.** The report text is
+`crates/horizon-ios`, printed by `Sources/main.m`; nothing about it is the game.
+
+### Where the game looks, on the phone
+
+- It works in `$HOME/Documents`, which on iOS is the app's data container (`main.rs` `into_app_sandbox`). Saves
+  land in `Documents/saves`, settings in `Documents/options.txt`, pack caches in `Documents/.horizon-cache`.
+- The log is `Library/Application Support/horizon/logs/latest.log` -- the container Xcode's *Devices and
+  Simulators* window downloads, and the way to read what happened when nothing appeared.
+- Assets: `Options::read` looks for `horizon-resources.json` in a `resources` folder **beside the executable**,
+  which on a phone means inside the bundle. In Xcode, add your prepared `.local/horizon-client/26.3` folder to
+  the **Horizon game** target as a folder reference with a path in bundle of `resources` (produce folders: keep
+  their name or rename it there). Without it the game has no blocks, no textures and no language file, and says
+  so in the log rather than crashing quietly.
+- The fallback path is `.local/horizon-client/26.3` under the working directory, i.e.
+  `Documents/.local/horizon-client/26.3`. The Files app hides dotfolders, which is why the bundle is the route
+  written above. `UIFileSharingEnabled` in `GameInfo.plist` is what makes `Documents` visible there at all.
+
+Nobody has run this on a device yet. What is measured is in the workflow's summary: the game compiles for the
+target, links, and comes out of Xcode's bundle as the same bytes Cargo wrote.
+
 ## Why the game, when it comes, is the Cargo executable and not another static library
 
 `crates/horizon-ios` is a library, so `cargo rustc --crate-type staticlib` works for it. The game is not a

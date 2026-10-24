@@ -33,6 +33,11 @@ settings:
     # having one generated (GENERATE_INFOPLIST_FILE: NO), and a generated plist is where Xcode would
     # otherwise add CFBundleIconName for you.
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    # Named here rather than in each script because a build phase's environment is Xcode's, not the shell that
+    # launched it: the workflow's $IOS_TARGET does not exist inside Xcode, and the Cargo phase has to ask for the
+    # same target the phone build is measured with. Build settings are exported to script phases, so both halves
+    # read one value.
+    IOS_TARGET: aarch64-apple-ios
 targets:
   Horizon:
     type: application
@@ -60,3 +65,85 @@ targets:
         OTHER_LDFLAGS:
           - $(inherited)
           - -lhorizon_ios
+
+  # The game, in a bundle Xcode can sign. Two build phases and one placeholder source make this work:
+  #
+  #   1. Cargo builds `horizon-client` for the phone (the pre-compile phase). rustc cannot emit a library from
+  #      a bin target, and `Game` is bin-only code, so there is no archive for Xcode to link here -- unlike the
+  #      shell above, whose crate is a library written to be linked.
+  #   2. Xcode links GameShell/main.m, which does nothing but exist so the target has an executable.
+  #   3. The post-compile phase overwrites that executable with the Rust one, and Xcode signs the bundle
+  #      afterwards, so what reaches the phone is the game under a signature automatic provisioning made.
+  #
+  # That ordering is the whole reason for the placeholder: signing and provisioning a hand-built bundle from a
+  # shell script needs a certificate and a profile nobody here has, while pressing Run does not.
+  HorizonGame:
+    type: application
+    platform: iOS
+    productName: HorizonGame
+    sources:
+      - path: GameShell
+      - path: Assets.xcassets
+    preBuildScripts:
+      - name: Build the game with Cargo
+        shell: /bin/bash
+        showEnvVarsInLog: false
+        script: |
+          set -euo pipefail
+          # Xcode runs build phases in a shell whose PATH is not your terminal's: rustup's binaries live in
+          # ~/.cargo/bin, which only a login shell adds. Say so rather than reporting "cargo not found".
+          export PATH="$HOME/.cargo/bin:$PATH"
+          command -v cargo >/dev/null 2>&1 || {
+            echo "error: no cargo on PATH. Install Rust with https://rustup.rs, or run Xcode from a terminal." >&2
+            exit 1
+          }
+          sysroot=$(rustc --print sysroot)
+          test -d "$sysroot/lib/rustlib/$IOS_TARGET/lib" || {
+            echo "error: Rust has no standard library for $IOS_TARGET. Run: rustup target add $IOS_TARGET" >&2
+            exit 1
+          }
+          cd "$SRCROOT/../.."
+          # The profile and flags the workflow builds with, so what a player runs from Xcode is what CI measured.
+          cargo build --release --locked --target "$IOS_TARGET" -p horizon-client --no-default-features
+    postCompileScripts:
+      - name: Put the Rust game in the bundle
+        shell: /bin/bash
+        showEnvVarsInLog: false
+        script: |
+          set -euo pipefail
+          game="$SRCROOT/../../target/$IOS_TARGET/release/horizon-client"
+          test -x "$game" || {
+            echo "error: the Cargo phase reported success and left no $game" >&2
+            exit 1
+          }
+          dest="$BUILT_PRODUCTS_DIR/$EXECUTABLE_PATH"
+          cp "$game" "$dest"
+          chmod +x "$dest"
+          # Named in the log because a bundle whose executable was replaced is the thing a reader of a later
+          # build log cannot tell from one that wasn't: both are called Horizon.
+          echo "Horizon: $dest is now the Rust game, $(stat -f %z "$dest") bytes."
+    settings:
+      base:
+        INFOPLIST_FILE: GameInfo.plist
+        GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_BUNDLE_IDENTIFIER: dev.horizon.game
+        PRODUCT_NAME: HorizonGame
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # The name inside the bundle, so GameInfo.plist's CFBundleExecutable is true of this build as well as of
+        # the hand-assembled one the workflow zips. Two ways to make the same app, one executable name.
+        EXECUTABLE_NAME: Horizon
+
+# Two schemes, so the run destination picker says which app is about to launch: the probe shell and the game.
+schemes:
+  Horizon shell:
+    build:
+      targets:
+        Horizon: All
+    run:
+      config: Release
+  Horizon game:
+    build:
+      targets:
+        HorizonGame: All
+    run:
+      config: Release

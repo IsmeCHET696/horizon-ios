@@ -39,18 +39,30 @@ that the only thing standing between it and a hand is a signing certificate, whi
 not a build problem. With any Apple ID added to Xcode, open the generated project, pick a team, and
 run it on the device.
 
-It is **not the game**. `horizon-client` does not compile for `aarch64-apple-ios`: its clipboard
-dependency `arboard` has no iOS backend and falls back to the Linux one, which pulls the Wayland stack
-into a phone build (`cargo tree --target aarch64-apple-ios -i wayland-backend`). That is the first
-thing to fix and the least of the work. Behind it are three structural gaps, each with a decision
-already taken:
+It is **not the game**: this bundle holds the probe crate, not `horizon-client`. The client now *compiles*
+for `aarch64-apple-ios` -- the Mac runner measured that on 2026-10-24, with `--no-default-features`, and the
+clipboard that used to drag the Wayland stack into a phone build is gated to the four targets `arboard` has
+a backend for (`crates/horizon-client/Cargo.toml`). Compiling is the entry fee and not the port. What stands
+between this bundle and a playable one:
 
 | Gap | Why it is structural | Decided |
 |---|---|---|
 | Assets | `horizon-prepare` runs a JDK against the player's own Minecraft install to produce `.local/horizon-client/26.3`; there is no Java on iOS | Prepare off-device, download to the phone |
-| Mods | `horizon-mods` runs them through wasmtime's cranelift JIT, and Apple forbids generating executable code at runtime (`docs/mods.md`) | Disabled on iOS |
+| Mods | `horizon-mods` runs them through wasmtime's cranelift JIT, and Apple forbids generating executable code at runtime (`docs/mods.md`) -- note the runner says the `mods` *feature compiles*, which is about the compiler and not about running | Disabled on iOS |
 | Input | the client's winit loop is desktop-shaped: cursor-warp mouse look, no touch | A touch layer, in no crate yet |
+| Sound, controllers | `cpal`'s CoreAudio backend is macOS's and `hidapi`/`gilrs` need libudev or IOKit, which is what `--no-default-features` drops and why the phone build asks for that flag | `AVAudioEngine` and `GCController`, neither written yet |
 
-So this app runs the half that is already portable: `horizon-core`'s Java-accurate RNG and
-HotSpot-exact `Math`, its paletted block storage, and `horizon-world`'s NBT codec — the four probes
-whose answers you can read on the screen, all of them computed on the phone rather than shipped to it.
+So this app runs the half that was already portable before the client was: `horizon-core`'s Java-accurate RNG
+and HotSpot-exact `Math`, its paletted block storage, and `horizon-world`'s NBT codec -- the four probes whose
+answers you can read on the screen, all of them computed on the phone rather than shipped to it.
+
+## Why the game, when it comes, is the Cargo executable and not another static library
+
+`crates/horizon-ios` is a library, so `cargo rustc --crate-type staticlib` works for it. The game is not a
+library: `Game` and `game::run()` live in the **bin** target (`crates/horizon-client/src/main.rs`, `game.rs`,
+`src/game/`), and the lib cannot see them. rustc will not emit a library from a bin -- both
+`crate-type = ["staticlib"]` in a `[[bin]]` and `cargo rustc --bin … --crate-type staticlib` are hard errors
+("crate types can only be specified for libraries and example libraries"). winit 0.30's iOS backend removes the
+need for that detour anyway: `EventLoop::run_app` calls `UIApplicationMain` itself, so a Rust executable built
+by `cargo build --target aarch64-apple-ios` is a legitimate `Payload/Horizon.app/Horizon`, which is what
+`.github/workflows/ios.yml` now produces beside this shell.

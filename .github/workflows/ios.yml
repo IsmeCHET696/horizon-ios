@@ -232,21 +232,21 @@ jobs:
             echo '| Build of `horizon-client` | Compiles for '"$IOS_TARGET"' | First error |'
             echo '|---|---|---|'
           } >> "$GITHUB_STEP_SUMMARY"
-          # `mods` is asked last and is expected to fail: horizon-mods runs code mods through a JIT Apple
-          # forbids. It is in the table so the answer about it is this workflow's, not a guess of mine.
+          # `mods` is asked too, and the runner says it compiles. That is not code mods working on a phone:
+          # horizon-mods runs them through a JIT, and Apple forbids one outside a browser engine, so the
+          # feature stays off in the app whatever this row says (packaging/ios/README.md). It is here because
+          # the compiler was never the obstacle for mods, and measuring that is this workflow's job.
           for spec in "no-defaults:--no-default-features" "with-mods:--no-default-features --features mods"; do
             name=${spec%%:*}
             features=${spec#*:}
             log="ios-attempt-horizon-client-$name.log"
             if cargo check --locked --target "$IOS_TARGET" -p horizon-client $features > "$log" 2>&1; then
-              verdict="yes"
-              first='&mdash;'
+              echo "| \`${features}\` | yes | &mdash; |" >> "$GITHUB_STEP_SUMMARY"
             else
-              verdict="no"
               first=$(first_error "$log")
               echo "::notice::horizon-client ${features} does not compile for ${IOS_TARGET}: ${first}"
+              echo "| \`${features}\` | no | ${first} |" >> "$GITHUB_STEP_SUMMARY"
             fi
-            echo "| \`${features}\` | ${verdict} | ${first} |" >> "$GITHUB_STEP_SUMMARY"
           done
       - uses: actions/upload-artifact@v4
         if: steps.rust.outputs.required != 'false'

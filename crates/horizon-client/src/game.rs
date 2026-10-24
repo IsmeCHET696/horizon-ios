@@ -10724,6 +10724,13 @@ impl ApplicationHandler for Game<'_> {
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
             attributes, "horizon", "horizon",
         );
+        // A phone asks its root view controller, not the bundle's `UISupportedInterfaceOrientations`, so
+        // declaring landscape in `Info.plist` alone still lets it rotate into portrait under the game.
+        #[cfg(target_os = "ios")]
+        let attributes = winit::platform::ios::WindowAttributesExtIOS::with_valid_orientations(
+            attributes,
+            winit::platform::ios::ValidOrientations::Landscape,
+        );
         let window = match event_loop.create_window(
             attributes
                 .with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
@@ -12906,6 +12913,13 @@ impl Loading {
         #[cfg(target_os = "linux")]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
             attributes, "horizon", "horizon",
+        );
+        // A phone asks its root view controller, not the bundle's `UISupportedInterfaceOrientations`, so
+        // declaring landscape in `Info.plist` alone still lets it rotate into portrait under the game.
+        #[cfg(target_os = "ios")]
+        let attributes = winit::platform::ios::WindowAttributesExtIOS::with_valid_orientations(
+            attributes,
+            winit::platform::ios::ValidOrientations::Landscape,
         );
         let window = match event_loop.create_window(
             attributes

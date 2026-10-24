@@ -106,57 +106,110 @@ pub trait Clipboard {
     fn set(&mut self, text: &str);
 }
 
-/// The system clipboard (`ClipboardManager`). On Wayland, arboard uses the
-/// data-control protocol and falls back to X11 (XWayland) on compositors
-/// without it. When no system clipboard can be reached, text copied in the
-/// game can still be pasted in the game.
-#[derive(Default)]
-pub struct SystemClipboard {
-    system: Option<arboard::Clipboard>,
-    /// The text Horizon last copied (`horizon-ctl status`).
-    copied: Option<String>,
-}
+/// The targets with a system clipboard arboard reaches: its Cargo.toml gate, and
+/// the reason `clipboard.rs` has two halves.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "android"
+))]
+mod system {
+    use super::Clipboard;
 
-impl SystemClipboard {
-    /// The text last copied by the game.
-    pub fn copied(&self) -> Option<&str> {
-        self.copied.as_deref()
+    /// The system clipboard (`ClipboardManager`). On Wayland, arboard uses the
+    /// data-control protocol and falls back to X11 (XWayland) on compositors
+    /// without it. When no system clipboard can be reached, text copied in the
+    /// game can still be pasted in the game.
+    #[derive(Default)]
+    pub struct SystemClipboard {
+        system: Option<arboard::Clipboard>,
+        /// The text Horizon last copied (`horizon-ctl status`).
+        copied: Option<String>,
     }
-    fn system(&mut self) -> Option<&mut arboard::Clipboard> {
-        if self.system.is_none() {
-            self.system = arboard::Clipboard::new().ok();
+
+    impl SystemClipboard {
+        /// The text last copied by the game.
+        pub fn copied(&self) -> Option<&str> {
+            self.copied.as_deref()
         }
-        self.system.as_mut()
+        fn system(&mut self) -> Option<&mut arboard::Clipboard> {
+            if self.system.is_none() {
+                self.system = arboard::Clipboard::new().ok();
+            }
+            self.system.as_mut()
+        }
     }
-}
 
-impl Clipboard for SystemClipboard {
-    fn get(&mut self) -> String {
-        let Some(system) = self.system() else {
-            return self.copied.clone().unwrap_or_default();
-        };
-        match system.get_text() {
-            Ok(text) => text,
-            Err(arboard::Error::ContentNotAvailable) => String::new(),
-            Err(_) => {
-                // A lost connection (a restarted compositor): reconnect next time.
+    impl Clipboard for SystemClipboard {
+        fn get(&mut self) -> String {
+            let Some(system) = self.system() else {
+                return self.copied.clone().unwrap_or_default();
+            };
+            match system.get_text() {
+                Ok(text) => text,
+                Err(arboard::Error::ContentNotAvailable) => String::new(),
+                Err(_) => {
+                    // A lost connection (a restarted compositor): reconnect next time.
+                    self.system = None;
+                    String::new()
+                }
+            }
+        }
+        fn set(&mut self, text: &str) {
+            if text.is_empty() {
+                return;
+            }
+            self.copied = Some(text.to_owned());
+            if let Some(system) = self.system()
+                && system.set_text(text.to_owned()).is_err()
+            {
                 self.system = None;
-                String::new()
             }
         }
     }
-    fn set(&mut self, text: &str) {
-        if text.is_empty() {
-            return;
+}
+
+/// A target with no desktop clipboard: an iPhone, where arboard has no backend and the Wayland
+/// stack behind its Linux one cannot even compile. The game's own copy buffer is the whole of it,
+/// which is the behaviour the half above already falls back to when no compositor answers — text
+/// copied in the game still pastes in the game, and `horizon-ctl status` still reports it. iOS's
+/// real pasteboard (`UIPasteboard`) would replace this module, not the code that calls it.
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "android"
+)))]
+mod system {
+    use super::Clipboard;
+
+    #[derive(Default)]
+    pub struct SystemClipboard {
+        /// The text Horizon last copied (`horizon-ctl status`).
+        copied: Option<String>,
+    }
+
+    impl SystemClipboard {
+        /// The text last copied by the game.
+        pub fn copied(&self) -> Option<&str> {
+            self.copied.as_deref()
         }
-        self.copied = Some(text.to_owned());
-        if let Some(system) = self.system()
-            && system.set_text(text.to_owned()).is_err()
-        {
-            self.system = None;
+    }
+
+    impl Clipboard for SystemClipboard {
+        fn get(&mut self) -> String {
+            self.copied.clone().unwrap_or_default()
+        }
+        fn set(&mut self, text: &str) {
+            if !text.is_empty() {
+                self.copied = Some(text.to_owned());
+            }
         }
     }
 }
+
+pub use system::SystemClipboard;
 
 /// A clipboard in memory.
 #[derive(Default, Debug)]

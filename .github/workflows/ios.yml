@@ -220,6 +220,34 @@ jobs:
             echo 'The archive artifact carries the subset this project has measured as portable; a crate passing'
             echo 'above is not a candidate to add to it until its runtime story is written down too.'
           } >> "$GITHUB_STEP_SUMMARY"
+          # The table above asks every crate with the features a desktop build has. A phone has no libudev to
+          # open a controller and no ALSA (cpal's CoreAudio backend is macOS's, not iOS's), so dropping the
+          # defaults is not a smaller game here but the only shape a phone can be given -- the same flag that
+          # makes the server build. Sound then comes from AVAudioEngine and controllers from GCController,
+          # neither of which any crate does yet, and that is a port, not a compile error.
+          {
+            echo
+            echo '## The game itself, without the features a phone cannot have'
+            echo
+            echo '| Build of `horizon-client` | Compiles for '"$IOS_TARGET"' | First error |'
+            echo '|---|---|---|'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # `mods` is asked last and is expected to fail: horizon-mods runs code mods through a JIT Apple
+          # forbids. It is in the table so the answer about it is this workflow's, not a guess of mine.
+          for spec in "no-defaults:--no-default-features" "with-mods:--no-default-features --features mods"; do
+            name=${spec%%:*}
+            features=${spec#*:}
+            log="ios-attempt-horizon-client-$name.log"
+            if cargo check --locked --target "$IOS_TARGET" -p horizon-client $features > "$log" 2>&1; then
+              verdict="yes"
+              first='&mdash;'
+            else
+              verdict="no"
+              first=$(first_error "$log")
+              echo "::notice::horizon-client ${features} does not compile for ${IOS_TARGET}: ${first}"
+            fi
+            echo "| \`${features}\` | ${verdict} | ${first} |" >> "$GITHUB_STEP_SUMMARY"
+          done
       - uses: actions/upload-artifact@v4
         if: steps.rust.outputs.required != 'false'
         with:

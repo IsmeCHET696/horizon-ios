@@ -112,6 +112,21 @@ claim and not an assumption.
 **If you open the shell and see the probe report, that is the other target.** The report text is
 `crates/horizon-ios`, printed by `Sources/main.m`; nothing about it is the game.
 
+### Landscape, which two places have to say
+
+The game is landscape-only on a phone, and both halves are needed:
+
+- `UISupportedInterfaceOrientations` in `Info.plist` and `GameInfo.plist` lists the two landscape directions and
+  no portrait. This is what the launch screen and the bundle's own metadata are judged by.
+- `ValidOrientations::Landscape` on the winit window attributes (`crates/horizon-client/src/game.rs`, both
+  `resumed` implementations). Without it the plist alone does not hold: winit implements
+  `supportedInterfaceOrientations` on its own view controller from its default
+  (`LandscapeAndPortrait`, and it never reads the plist), and a phone asks the root view controller rather than
+  the bundle, so the game would rotate into portrait under it.
+
+Both landscape directions, not one: a handheld gets to be held either way, and the window size is the same in
+each, so nothing in the render path has to care.
+
 ### Where the game looks, on the phone
 
 - It works in `$HOME/Documents`, which on iOS is the app's data container (`main.rs` `into_app_sandbox`). Saves

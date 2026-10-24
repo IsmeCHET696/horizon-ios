@@ -1,0 +1,225 @@
+name: ios
+# How much of Horizon compiles for iPhone and iPad, measured on every pull request and every push to main.
+# Nothing here is a playable game: the iOS port is unscheduled and the client does not build for a phone today.
+# This workflow's job is to measure the distance: one line per crate, so that a crate moving from broken to
+# building shows up as a number that changes, and to publish the archives for the crates that are already iOS-clean
+# so an app shell can link against them. Everything runs in one job on one machine: a matrix would multiply the
+# macOS minutes this repository pays for, and both halves share one target/ cache anyway.
+# Read the two tables in the run's summary before deciding what a port costs. The short version, measured
+# 2026-10-24 on x86-64 Linux with the aarch64-apple-ios target: thirteen of the workspace's twenty crates check
+# clean for a phone, including the whole simulation (horizon-core, horizon-world: worldgen, NBT, blocks, entities,
+# physics) and the asset decoders (horizon-assets). The client stops inside its own dependencies, because `arboard`
+# treats iOS as a Linux desktop and drags the whole Wayland stack in with it (cargo tree --target
+# aarch64-apple-ios -i wayland-backend shows arboard -> wl-clipboard-rs -> wayland-*). The other six failures stop
+# at a C build script (ring, hidapi) that only an Apple toolchain can answer for: those crates have no verdict
+# until this workflow runs on a Mac, which is the reason it does.
+# Running on a phone is a separate problem from compiling for one, and the tables below say which is which.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # A new push to a pull request replaces its running check; main's runs all finish.
+  group: ios-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  HORIZON_TELEMETRY_URL: "off"
+  IOS_TARGET: aarch64-apple-ios
+  # The crates built into the archives below, space-separated. Listing one here is a claim that it is portable, so
+  # each was measured rather than hoped for, and a crate may join only after it passes this workflow's own
+  # per-crate pass on a real Apple toolchain. Deliberately absent, with the reason: horizon-mods, which checks
+  # clean but runs code mods through wasmtime's cranelift JIT, and Apple forbids generating executable code at
+  # runtime (docs/mods.md:129 names wasmi as the no-JIT path, and no interpreter or precompiled one exists in the
+  # workspace yet); horizon-prepare, which also checks clean but shells out to javac and java against the player's
+  # own Minecraft install (crates/horizon-prepare/src/java.rs:5-7), so it can only ever run where a JDK and that
+  # install exist; horizon-bench, horizon-friends, horizon-mod-sdk, horizon-relay and horizon-client, which need no
+  # mention here because the pass below reports them; and horizon-server-files, horizon-telemetry,
+  # horizon-release-sign, horizon-port-pack, horizon-dualsense and horizon-server, which stopped at a C build
+  # script on the machine that measured them and are not claimed as portable until an Apple toolchain says so.
+  PORTABLE: horizon-core horizon-world horizon-threads horizon-assets horizon-protocol horizon-theme
+
+jobs:
+  portability:
+    # vars.MAC_RUNNER lets the maintainer point this at his own Mac, as release.yml does; a hosted Mac answers
+    # for everyone else. aarch64-apple-ios needs no Xcode project: rustc cross-compiles, and the steps below
+    # check the objects it produced really are arm64 iOS.
+    runs-on: ${{ vars.MAC_RUNNER || 'macos-14' }}
+    # Six static archives plus twenty crate checks, from a cold cache on the first run: nothing here is quick, and
+    # a run that is killed at the halfway point reports no portability table at all.
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: true
+          # The whole history: the gate below diffs the pull request's base against its head, and both commits
+          # have to be in the checkout for that to work (ci.yml asks for the same thing).
+          fetch-depth: 0
+      - name: Does this pull request change anything Rust?
+        if: github.event_name == 'pull_request'
+        id: rust
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 tools/ci/rust_changes.py "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.rust.outputs.required != 'false'
+        with:
+          targets: ${{ env.IOS_TARGET }}
+      - uses: Swatinem/rust-cache@v2
+        if: steps.rust.outputs.required != 'false' && runner.environment == 'github-hosted'
+        with:
+          shared-key: ios-${{ env.IOS_TARGET }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build the iOS-clean crates as static archives
+        if: steps.rust.outputs.required != 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p dist-ios
+          for name in $PORTABLE; do
+            # One crate per invocation: --crate-type takes a single target, so the workspace cannot be built for
+            # the phone in one command the way release.yml builds the desktop binaries.
+            cargo rustc --release --locked --target "$IOS_TARGET" -p "$name" --lib --crate-type staticlib
+            archive="target/$IOS_TARGET/release/lib${name//-/_}.a"
+            test -s "$archive" || { echo "::error::$name built no archive"; exit 1; }
+            cp "$archive" dist-ios/
+          done
+      # Cargo cross-compiled; this proves what it wrote is arm64 iOS machine code, so a later app shell cannot
+      # discover that an archive was built for the wrong platform after everything else was wired up. The archives
+      # are worth carrying even once that shell exists: an Xcode target links one directly, with no Cargo build of
+      # its own. Each is an ar archive of every object the crate and its dependencies compile to, so it is the whole
+      # program, not a stub. The objects are checked, not the archives: lipo and otool read a Mach-O file, and a .a
+      # is only a container for them.
+      - name: The archives are arm64 iOS code
+        if: steps.rust.outputs.required != 'false'
+        run: |
+          set -euo pipefail
+          {
+            echo '## Archives built for '"$IOS_TARGET"
+            echo
+            echo '| Archive | Objects | Architecture | iOS marker |'
+            echo '|---|---|---|---|'
+          } >> "$GITHUB_STEP_SUMMARY"
+          for archive in dist-ios/*.a; do
+            # `|| true`: grep exits 1 when it counted nothing, and pipefail would turn an empty archive into an
+            # abort before the line below can report it properly.
+            objects=$(ar t "$archive" | grep -c '\.o$' || true)
+            test "$objects" -gt 0 || { echo "::error::$(basename "$archive") holds no objects"; exit 1; }
+            dir=$(mktemp -d)
+            # Three of them, not all: an archive holds every crate linked into it as well (horizon-core's carries
+            # 394 objects), and they all came off one compiler invocation targeting one platform.
+            for member in $(ar t "$archive" | grep '\.o$' | head -3); do
+              ( cd "$dir" && ar x "$GITHUB_WORKSPACE/$archive" "$member" )
+              object="$dir/$member"
+              test -f "$object" || { echo "::error::$(basename "$archive") yielded no $member"; exit 1; }
+              lipo -verify_arch arm64 "$object" >/dev/null \
+                || { echo "::error::$(basename "$archive") is not arm64"; exit 1; }
+            done
+            # arm64 Mach-O alone is what a macOS build produces as well, so the platform is what makes this a
+            # check for a phone. rustc marks these objects with LC_VERSION_MIN_IPHONEOS; a toolchain on the newer
+            # scheme records it as LC_BUILD_VERSION with platform 2, which is iOS, and platform 1 would be macOS.
+            # Both spellings are accepted, neither is assumed, and anything else fails the run.
+            marks=$(otool -l "$object")
+            if printf '%s' "$marks" | grep -q LC_VERSION_MIN_IPHONEOS; then
+              description=LC_VERSION_MIN_IPHONEOS
+            elif printf '%s' "$marks" | grep -A3 LC_BUILD_VERSION | grep -qE 'platform +(2|IOS)( |$)'; then
+              description='LC_BUILD_VERSION platform 2'
+            else
+              echo "::error::$(basename "$archive") is not marked iOS; a phone cannot load it"; exit 1
+            fi
+            echo "| \`$(basename "$archive")\` | $objects | arm64 | \`$description\` |" >> "$GITHUB_STEP_SUMMARY"
+            rm -rf "$dir"
+          done
+      - uses: actions/upload-artifact@v4
+        if: steps.rust.outputs.required != 'false'
+        with:
+          name: horizon-ios-aarch64-apple-ios
+          path: dist-ios/
+          retention-days: 3
+          if-no-files-found: error
+
+      # One attempt per crate, on one machine, so a crate that stops compiling is named rather than buried: cargo
+      # gives up at the first failure of the whole graph, which would otherwise report one error and hide the rest.
+      # Nothing here fails the run. The client's failure is the expected state of this repository, and the point is
+      # its size, which the run's summary publishes.
+      - name: Attempt every crate for iPhone and iPad
+        if: steps.rust.outputs.required != 'false'
+        env:
+          ALL: >-
+            horizon-core horizon-world horizon-threads horizon-assets horizon-protocol horizon-theme
+            horizon-bench horizon-friends horizon-relay horizon-mod-sdk horizon-mods horizon-server-files
+            horizon-telemetry horizon-release-sign horizon-port-pack horizon-dualsense horizon-bots
+            horizon-server horizon-prepare horizon-client
+        run: |
+          set -uo pipefail
+          # The one line that says what stopped a crate. Order matters: cargo prints the compiler's individual
+          # errors before the summary naming the crate that failed, and the summary is the useful one, so take it
+          # when it is there (which is why this step runs cargo unquiet). A build script that fails never reaches
+          # that line, so its own summary is next, then the first bare error. The text inside the backticks carries
+          # a version, "ring v0.17.14", so everything up to the closing backtick belongs to the answer. Pipes are
+          # escaped here because the answer is written into a table.
+          first_error() {
+            local log="$1" found
+            for pattern in 'could not compile `[^`]+`' \
+                           'failed to run custom build command for `[^`]+`' \
+                           '^error(\[[A-Z0-9]+\])?: [^|]+'; do
+              found=$(grep -oE "$pattern" "$log" | head -1)
+              if [ -n "$found" ]; then printf '%s' "${found//|/\\|}"; return; fi
+            done
+            printf 'unknown'
+          }
+          {
+            echo '## iOS portability, crate by crate'
+            echo
+            echo 'Compiling is the smaller half of the distance. `horizon-mods` builds and still cannot run on a'
+            echo 'phone (no JIT), and `horizon-prepare` builds and cannot run either (no Java on iOS); the client'
+            echo 'needs a touch input layer that does not exist in any crate, and its assets are not its own files'
+            echo 'but ones a desktop JDK prepares from the player'\''s copy of Minecraft.'
+            echo
+            echo '| Crate | Compiles for '"$IOS_TARGET"' | First error |'
+            echo '|---|---|---|'
+          } >> "$GITHUB_STEP_SUMMARY"
+          pass=0
+          fail=0
+          for name in $ALL; do
+            log="ios-attempt-$name.log"
+            # Not `--lib`: horizon-bots and horizon-server are binaries with no library to build, and asking for
+            # one reports them as failures of the port when they are a mistake in this command. Checking the
+            # package's libraries and binaries is the honest question, and leaves the 275-odd examples and the
+            # test harnesses to the desktop workflow.
+            if cargo check --locked --target "$IOS_TARGET" -p "$name" > "$log" 2>&1; then
+              verdict="yes"
+              pass=$((pass + 1))
+              first='&mdash;'
+            else
+              verdict="no"
+              fail=$((fail + 1))
+              first=$(first_error "$log")
+              echo "::notice::${name} does not compile for ${IOS_TARGET}: ${first}"
+            fi
+            echo "| \`${name}\` | ${verdict} | ${first} |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          {
+            echo
+            echo "**${pass} of $((pass + fail)) crates compile for a phone today.**"
+            echo
+            echo 'The archive artifact carries the subset this project has measured as portable; a crate passing'
+            echo 'above is not a candidate to add to it until its runtime story is written down too.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: steps.rust.outputs.required != 'false'
+        with:
+          name: horizon-ios-portability-logs
+          path: ios-attempt-*.log
+          # These logs are this step's only output, and the reason it exists: a run weeks from now is compared
+          # against them to show what moving one crate forward actually cost.
+          retention-days: 30
+          if-no-files-found: error

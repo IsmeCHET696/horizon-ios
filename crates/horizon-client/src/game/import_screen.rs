@@ -26,6 +26,9 @@ pub(super) struct Import {
     error: Option<String>,
     received: u64,
     total: u64,
+    /// The game files coming from the download server (`import::download`): the first door, tried
+    /// before the screen asks anyone to send them. `None` once it is over or failed.
+    download: Option<horizon_client::import::download::Download>,
 }
 
 impl Loading {
@@ -44,27 +47,28 @@ impl Loading {
             }
         };
         horizon_client::ui_theme::reset_atlas();
-        let session = match horizon_client::import::http::Session::start(&home) {
-            Ok(session) => Some(session),
-            Err(error) => {
-                log::warn!("Horizon: no upload port: {error}");
-                None
-            }
+        // Download them first; the Wi-Fi and cable doors open only if that fails.
+        let url = horizon_client::import::download::url(horizon_core::VANILLA_VERSION);
+        let download =
+            match horizon_client::import::download::Download::start(url.clone(), home.clone()) {
+                Ok(download) => {
+                    log::info!("Horizon: no game files ({reason}); downloading {url}");
+                    Some(download)
+                }
+                Err(error) => {
+                    log::warn!("Horizon: could not start downloading the game files: {error}");
+                    None
+                }
+            };
+        let session = if download.is_some() {
+            None
+        } else {
+            open_session(&home)
         };
         log::warn!(
             "Horizon: no game files to load ({reason}); waiting for an import in {}",
             home.display()
         );
-        if let Some(session) = &session {
-            // The screen shows this, and the log is the only other place it can be read: a phone
-            // plugged into a Mac gets its Documents folder, and a headless run has no screen at all.
-            log::info!(
-                "Horizon: post an archive to http://{}:{}/upload with the code {}",
-                session.address().unwrap_or("this device"),
-                session.port(),
-                session.pin()
-            );
-        }
         self.import = Some(Import {
             session,
             atlas,
@@ -73,6 +77,7 @@ impl Loading {
             error: None,
             received: 0,
             total: 0,
+            download,
         });
     }
 
@@ -88,6 +93,31 @@ impl Loading {
             return Ok(());
         };
         let mut ready = false;
+        if let Some(result) = import.download.as_ref().and_then(|d| d.poll()) {
+            import.download = None;
+            match result {
+                Ok(placed) => {
+                    log::info!(
+                        "Horizon: downloaded {} ({} files) to {}",
+                        placed.kind.label(),
+                        placed.files,
+                        placed.path.display()
+                    );
+                    ready |= placed.kind == horizon_client::import::Kind::Resources;
+                    if !ready {
+                        import.error =
+                            Some("The download was not game files. Send them another way.".into());
+                    }
+                }
+                Err(error) => {
+                    log::warn!("Horizon: the game files did not download: {error}");
+                    import.error = Some(format!("The game files did not download: {error}"));
+                }
+            }
+            if !ready {
+                import.session = open_session(&import.home);
+            }
+        }
         if let Some(session) = &mut import.session {
             for news in session.poll() {
                 match news {
@@ -164,6 +194,17 @@ impl Loading {
     /// One frame of the wait.
     pub(super) fn draw_import(&self, batch: &mut HudBatch) {
         let Some(import) = &self.import else { return };
+        if let Some(download) = &import.download {
+            let (line, fraction) = horizon_client::import::screen::download_line(&download.stage());
+            horizon_client::import::screen::draw_download(
+                batch,
+                &import.atlas,
+                horizon_core::VANILLA_VERSION,
+                &line,
+                fraction,
+            );
+            return;
+        }
         let address = import
             .session
             .as_ref()
@@ -182,5 +223,25 @@ impl Loading {
                 error: import.error.as_deref(),
             },
         );
+    }
+}
+
+/// The Wi-Fi door: a listener for an upload. Its address goes to the log too: a phone plugged into a Mac
+/// gets its Documents folder, and a headless run has no screen at all.
+fn open_session(home: &std::path::Path) -> Option<horizon_client::import::http::Session> {
+    match horizon_client::import::http::Session::start(home) {
+        Ok(session) => {
+            log::info!(
+                "Horizon: post an archive to http://{}:{}/upload with the code {}",
+                session.address().unwrap_or("this device"),
+                session.port(),
+                session.pin()
+            );
+            Some(session)
+        }
+        Err(error) => {
+            log::warn!("Horizon: no upload port: {error}");
+            None
+        }
     }
 }

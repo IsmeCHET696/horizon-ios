@@ -12,6 +12,7 @@
 //! cannot drift apart, and [`Pack`] refuses an archive that is none of those before it writes a
 //! single file.
 
+pub mod download;
 pub mod http;
 pub mod screen;
 

@@ -226,6 +226,69 @@ pub fn draw(batch: &mut HudBatch, atlas: &HudAtlas, status: &Status) {
     ui.finish();
 }
 
+/// The download screen: the version, one line saying what is happening, and one bar. `fraction` is
+/// None while the size is unknown, which draws the bar full and lets the line carry the count.
+pub fn draw_download(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    version: &str,
+    line: &str,
+    fraction: Option<f32>,
+) {
+    let mut ui = ui_theme::Ui::new(atlas, batch, (0.0, 0.0));
+    let (w, h) = (ui.w, ui.h);
+    let width = (w - MARGIN * 2.0).clamp(120.0, 520.0);
+    let left = ((w - width) / 2.0).floor();
+    let top = (h / 2.0 - 30.0).floor();
+    ui.text(
+        Face::Medium,
+        20.0,
+        left,
+        top,
+        color::TEXT,
+        &format!("Horizon {version}"),
+    );
+    let bar = top + line_h(20.0) + GAP;
+    ui.rounded(left, bar, width, 6.0, 3.0, color::HOVER);
+    let filled = fraction.unwrap_or(1.0).clamp(0.0, 1.0);
+    ui.rounded(
+        left,
+        bar,
+        (width * filled).max(6.0),
+        6.0,
+        3.0,
+        color::ACCENT,
+    );
+    ui.text(
+        Face::Regular,
+        13.0,
+        left,
+        bar + 6.0 + GAP,
+        color::MUTED,
+        line,
+    );
+    ui.finish();
+}
+
+/// What the download screen's line says.
+pub fn download_line(stage: &crate::import::download::Stage) -> (String, Option<f32>) {
+    match *stage {
+        crate::import::download::Stage::Downloading { received, total } if total > 0 => (
+            format!(
+                "Downloading game files: {} of {}",
+                megabytes(received),
+                megabytes(total)
+            ),
+            Some(received as f32 / total as f32),
+        ),
+        crate::import::download::Stage::Downloading { received, .. } => (
+            format!("Downloading game files: {}", megabytes(received)),
+            None,
+        ),
+        crate::import::download::Stage::Installing => ("Installing game files...".into(), None),
+    }
+}
+
 /// Bytes as the screen says them: whole megabytes, because a phone is reading this at arm's length.
 fn megabytes(bytes: u64) -> String {
     format!("{} MB", bytes / 1_048_576)
@@ -261,6 +324,24 @@ mod tests {
             !batch.patches.is_empty(),
             "no glyph was uploaded, so nothing would be legible"
         );
+    }
+
+    #[test]
+    fn the_download_screen_draws_its_bar_and_says_how_far() {
+        use crate::import::download::Stage;
+        let atlas = HudAtlas::without_pack(Path::new("/horizon-test-no-assets")).unwrap();
+        ui_theme::reset_atlas();
+        let mut batch = HudBatch::new([1792, 828]);
+        let stage = Stage::Downloading {
+            received: 300 << 20,
+            total: 600 << 20,
+        };
+        let (line, fraction) = download_line(&stage);
+        assert_eq!(line, "Downloading game files: 300 MB of 600 MB");
+        assert_eq!(fraction, Some(0.5));
+        draw_download(&mut batch, &atlas, "26.3", &line, fraction);
+        assert!(!batch.vertices.is_empty(), "the screen drew nothing");
+        assert_eq!(download_line(&Stage::Installing).1, None);
     }
 
     #[test]

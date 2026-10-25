@@ -1,8 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// The launcher, upright: Play (the game, its worlds and the player), Servers, Gallery, Settings and What's
-/// New. Everything it knows about the game it asks the game under it (GameLink.swift, Bridge.swift).
+/// The launcher, upright: Play (the game, its worlds and the player), Servers, Packs, Gallery and Settings
+/// (What's New is in Settings). Everything it knows about the game it asks the game under it (GameLink.swift,
+/// Bridge.swift).
 struct HomeView: View {
     /// Play: uncover the game (Present.swift).
     var onPlay: () -> Void
@@ -17,7 +18,7 @@ struct HomeView: View {
     @State private var tab = Tab.play
 
     enum Tab: Hashable {
-        case play, servers, gallery, settings, news
+        case play, servers, packs, gallery, settings
     }
 
     // Spelled out: a private property makes the memberwise one private, and Present.swift builds this view.
@@ -41,15 +42,15 @@ struct HomeView: View {
             page(refresh: { await link.reloadServers() }) { ServersPage(link: link) }
                 .tabItem { Label("Servers", systemImage: "globe") }
                 .tag(Tab.servers)
+            page { PacksPage(link: link) }
+                .tabItem { Label("Packs", systemImage: "square.stack.3d.up.fill") }
+                .tag(Tab.packs)
             page { GalleryPage() }
                 .tabItem { Label("Gallery", systemImage: "photo.on.rectangle") }
                 .tag(Tab.gallery)
             page { SettingsPage(link: link, download: download) }
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
                 .tag(Tab.settings)
-            page { NewsPage() }
-                .tabItem { Label("What's New", systemImage: "sparkles") }
-                .tag(Tab.news)
         }
         .tint(Theme.accentText)
         .onChange(of: tab) { _ in Haptics.tap() }

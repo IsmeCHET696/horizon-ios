@@ -103,6 +103,7 @@ struct SettingsPage: View {
     @ObservedObject var link: GameLink
     @ObservedObject var download: GameFilesDownload
     @StateObject private var model = GameOptions()
+    @State private var showingNews = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -138,12 +139,21 @@ struct SettingsPage: View {
             GameFilesCard(download: download, missing: !GameFolder.hasGameFiles)
 
             SectionHeader(title: "About")
+            SecondaryButton(title: "What's New", icon: "sparkles") { showingNews = true }
             About(version: link.version)
         }
         .task(id: link.ready) {
             if link.ready {
                 await model.load()
             }
+        }
+        .sheet(isPresented: $showingNews) {
+            ScrollView {
+                NewsPage().pageColumn()
+            }
+            .background(Theme.background.ignoresSafeArea())
+            .presentationDetents([.large])
+            .preferredColorScheme(.dark)
         }
     }
 }

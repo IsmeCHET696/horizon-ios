@@ -1254,6 +1254,8 @@ struct Game<'a> {
     pad: pad::Pads,
     /// Touch controls and the finger that is the pointer over menus (game/touch.rs).
     touch: touch::TouchInput,
+    /// The Mojang Studios screen fading out after loading, and when loading finished.
+    loading_overlay: Option<(horizon_client::loading_overlay::Overlay, Instant)>,
     frames: u64,
     /// Frames drawn with the player in the world, for `--world-frames`.
     world_frames: u64,
@@ -5063,6 +5065,15 @@ impl Game<'_> {
         self.draw_sign_editor(&mut batch);
         self.draw_book(&mut batch);
         self.draw_touch_close(&mut batch);
+        if let Some((overlay, at)) = &mut self.loading_overlay {
+            overlay.done(at.elapsed().as_secs_f32());
+            if overlay.finished() {
+                self.loading_overlay = None;
+            } else {
+                let dark = self.settings.file.bool("darkMojangStudiosBackground");
+                overlay.draw(&mut batch, &self.gui.atlas, dark);
+            }
+        }
         batch
     }
     fn creative_inventory_open(&self) -> bool {
@@ -11811,6 +11822,7 @@ impl<'a> Game<'a> {
             last_input: now,
             pad: Default::default(),
             touch: Default::default(),
+            loading_overlay: None,
             frames: 0,
             world_frames: 0,
             fps: 0.0,
@@ -12940,6 +12952,8 @@ struct Loading {
     menu: startup_menu::StartupMenu,
     /// The wait for game files, on a device that cannot do without them: `None` loading as usual.
     import: Option<import_screen::Import>,
+    /// The Mojang Studios screen over the menu while the resources load (`LoadingOverlay`).
+    brand: horizon_client::loading_overlay::Overlay,
     error: Option<Box<dyn std::error::Error>>,
 }
 impl Loading {
@@ -12996,7 +13010,11 @@ impl Loading {
             None,
             self.settings.horizon.api,
         ) {
-            Ok(r) => self.renderer = Some(r),
+            Ok(r) => {
+                self.renderer = Some(r);
+                // iPhone and iPad: the launcher covers the game from its first window until Play.
+                horizon_ios_launcher::present();
+            }
             Err(e) => {
                 self.error = Some(e);
                 event_loop.exit();
@@ -13082,6 +13100,14 @@ impl Loading {
         };
         let mut batch = HudBatch::new(size);
         self.draw_menu(&mut batch);
+        // Not over the import screen: that is what a game with no files has to show.
+        if !self.importing()
+            && let Some(gui) = &self.gui
+        {
+            self.brand.ease(self.progress.fraction());
+            let dark = self.settings.file.bool("darkMojangStudiosBackground");
+            self.brand.draw(&mut batch, &gui.atlas, dark);
+        }
         let mut frame = loading_frame(&batch);
         frame.yaw = self.panorama_rotation.update(
             self.started.elapsed().as_secs_f32(),
@@ -13165,6 +13191,8 @@ impl Loading {
         game.world_renderer_ready = true;
         game.fullscreen = self.fullscreen;
         game.panorama_rotation = self.panorama_rotation;
+        // Loading is done: the overlay stays a second and fades out over the title, in the game's frames.
+        game.loading_overlay = Some((std::mem::take(&mut self.brand), Instant::now()));
         self.menu.handoff(&mut game);
         game.apply_settings();
         game.previous = Instant::now();
@@ -13293,6 +13321,7 @@ fn run_loading(
         shown: false,
         menu,
         import: None,
+        brand: Default::default(),
         error: None,
     };
     let mut app = App::Loading(Box::new(loading));

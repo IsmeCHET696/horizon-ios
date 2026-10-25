@@ -6,8 +6,13 @@
 //! Loaded at run time rather than linked, so a bundle without the framework (the workflow's hand-assembled
 //! one, a desktop build) is the game as before. The game forbids `unsafe`, so the loading lives here.
 
-/// Load the launcher and show it over the game. False when this build or bundle has none.
+/// Load the launcher and show it over the game, once per run: the loading screen's window asks, and so does
+/// the game's when it makes its own. False when this build or bundle has none, or it was already shown.
 pub fn present() -> bool {
+    static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if SHOWN.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
     #[cfg(target_os = "ios")]
     return ios::present();
     #[cfg(not(target_os = "ios"))]

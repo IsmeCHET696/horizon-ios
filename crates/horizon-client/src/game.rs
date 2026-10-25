@@ -1557,6 +1557,9 @@ struct Game<'a> {
     guest_use: Option<GuestUse>,
     /// Level events of this tick for the guests, and the guest acting now.
     lan_events: Vec<(i32, [i32; 3], i32, Option<u32>)>,
+    /// The songs this tick's level events 1010 start, by their index in this list: the hub knows the
+    /// `jukebox_song` registry ids the event carries (game/jukebox.rs).
+    lan_songs: Vec<String>,
     /// Block events (position, b0, b1, state) and entity events (id, event,
     /// position) for the guests.
     lan_block_events: Vec<([i32; 3], i32, i32, u32)>,
@@ -2685,6 +2688,25 @@ impl Game<'_> {
                     data,
                 } => self.sculk_charge_event(pos, data),
                 LevelEvent::LevelEvent { id: 3007, pos, .. } => self.shriek_event(pos),
+                // LevelEventHandler 1010 and 1011: a server's jukebox starts or stops a song (an
+                // in-frame world plays its own jukeboxes: game/jukebox.rs).
+                LevelEvent::LevelEvent {
+                    id: 1010,
+                    pos,
+                    data,
+                } => {
+                    let song = self.remote.as_ref().and_then(|r| {
+                        r.registries
+                            .name("minecraft:jukebox_song", data)
+                            .map(str::to_owned)
+                    });
+                    if let Some(song) = song {
+                        self.play_song([pos.x, pos.y, pos.z], &song);
+                    }
+                }
+                LevelEvent::LevelEvent { id: 1011, pos, .. } => {
+                    self.silence_song([pos.x, pos.y, pos.z])
+                }
                 LevelEvent::LevelEvent { id: 2004, pos, .. } => {
                     self.spawner_burst([pos.x, pos.y, pos.z])
                 }
@@ -12023,6 +12045,7 @@ impl<'a> Game<'a> {
             forced_hit: None,
             guest_use: None,
             lan_events: Vec::new(),
+            lan_songs: Vec::new(),
             lan_block_events: Vec::new(),
             lan_entity_events: Vec::new(),
             lid_openers: HashMap::new(),

@@ -71,6 +71,7 @@ pub(super) struct Parked {
     lectern_pulses: Vec<((i32, i32, i32), i32)>,
     lid_openers: HashMap<(i32, i32, i32), i32>,
     lan_events: Vec<(i32, [i32; 3], i32, Option<u32>)>,
+    lan_songs: Vec<String>,
     lan_block_events: Vec<([i32; 3], i32, i32, u32)>,
     lan_entity_events: Vec<(i32, i8, [f64; 3])>,
     /// Only the per-level parts of these are used (`swap_level`).
@@ -148,6 +149,7 @@ impl Game<'_> {
             lectern_pulses: Vec::new(),
             lid_openers: HashMap::new(),
             lan_events: Vec::new(),
+            lan_songs: Vec::new(),
             lan_block_events: Vec::new(),
             lan_entity_events: Vec::new(),
             anims: Default::default(),
@@ -195,6 +197,7 @@ impl Game<'_> {
         swap(&mut self.lectern_pulses, &mut p.lectern_pulses);
         swap(&mut self.lid_openers, &mut p.lid_openers);
         swap(&mut self.lan_events, &mut p.lan_events);
+        swap(&mut self.lan_songs, &mut p.lan_songs);
         swap(&mut self.lan_block_events, &mut p.lan_block_events);
         swap(&mut self.lan_entity_events, &mut p.lan_entity_events);
         let (a, b) = (&mut self.be_anims, &mut p.anims);

@@ -92,22 +92,43 @@ impl Game<'_> {
         self.jukebox_changed(pos);
         true
     }
-    /// Level event 1010: the song from the jukebox, and the "Now Playing" overlay.
+    /// `JukeboxSongPlayer.play`: level event 1010, which a server sends its players with the song's registry
+    /// id (game/lan.rs), and which this game plays itself.
     fn start_song(&mut self, pos: [i32; 3], song: &str) {
-        self.stop_song(pos);
+        if self.audio.capture.is_some() {
+            self.lan_events
+                .push((1010, pos, self.lan_songs.len() as i32, None));
+            self.lan_songs.push(song.to_owned());
+        }
+        self.play_song(pos, song);
+        self.update_song_volumes();
+    }
+    /// `JukeboxSongPlayer.stop`: level event 1011 for the players, and the song stops here.
+    fn stop_song(&mut self, pos: [i32; 3]) {
+        if self.audio.capture.is_some()
+            && self.jukebox_sounds.contains_key(&(pos[0], pos[1], pos[2]))
+        {
+            self.lan_events.push((1011, pos, 0, None));
+        }
+        self.silence_song(pos);
+    }
+    /// `LevelRenderer.playJukeboxSong` (level event 1010): the song from the jukebox, and the "Now Playing"
+    /// overlay. A server's players get here from the event alone.
+    pub(super) fn play_song(&mut self, pos: [i32; 3], song: &str) {
+        self.silence_song(pos);
         let Some(s) = self.res.items().songs.get(song).cloned() else {
             return;
         };
-        // LevelRenderer.playJukeboxSong: SimpleSoundInstance.forJukeboxSong.
+        // SimpleSoundInstance.forJukeboxSong.
         let id = self.audio.play_jukebox_song(&s.sound, pos);
         self.jukebox_sounds.insert((pos[0], pos[1], pos[2]), id);
         let description =
             horizon_client::component::to_text(&s.description, &mut |k| Text::literal(k));
         self.titles
             .set_overlay(Text::translate("record.nowPlaying", &[description]), true);
-        self.update_song_volumes();
     }
-    fn stop_song(&mut self, pos: [i32; 3]) {
+    /// `LevelRenderer.stopJukeboxSong` (level event 1011).
+    pub(super) fn silence_song(&mut self, pos: [i32; 3]) {
         if let Some(id) = self.jukebox_sounds.remove(&(pos[0], pos[1], pos[2])) {
             self.audio.stop_and_release(id);
         }

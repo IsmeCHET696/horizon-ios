@@ -608,6 +608,7 @@ impl Game<'_> {
         self.world.light_log = None;
         self.audio.capture = None;
         self.lan_events.clear();
+        self.lan_songs.clear();
         self.streaming.extra.clear();
         if announce {
             self.system_message(Text::translate(
@@ -1132,11 +1133,22 @@ impl Game<'_> {
     }
     /// Send the tick's level events, sounds and mob animations.
     fn lan_flush_effects(&mut self, host: &mut LanHost) {
+        let songs = std::mem::take(&mut self.lan_songs);
         for (kind, pos, data, acting) in std::mem::take(&mut self.lan_events) {
             if kind == 2001 {
                 host.broken
                     .push([f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2])]);
             }
+            // JukeboxSongPlayer.play: the song's id in the registry the guests were sent.
+            let data = if kind == 1010 {
+                let song = usize::try_from(data).ok().and_then(|i| songs.get(i));
+                match song.and_then(|s| host.hub.registry_id("minecraft:jukebox_song", s)) {
+                    Some(id) => id,
+                    None => continue,
+                }
+            } else {
+                data
+            };
             host.hub.level_event(kind, pos, data, acting);
         }
         for (pos, b0, b1, state) in std::mem::take(&mut self.lan_block_events) {

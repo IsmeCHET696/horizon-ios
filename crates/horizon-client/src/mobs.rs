@@ -856,6 +856,8 @@ pub struct Mob {
     /// The skin texture of a player mob (`PlayerInfo.getSkin`), which
     /// replaces the type's default when its download is ready.
     pub skin: Option<String>,
+    /// That skin is slim (`PlayerSkin.model`): the body is `player_slim`'s.
+    pub slim: bool,
 }
 /// Events a mob tick asks the game to act on.
 #[derive(Clone, Debug)]
@@ -1581,6 +1583,7 @@ impl Mob {
             rider: None,
             outbox: Vec::new(),
             skin: None,
+            slim: false,
             attrs: Attrs {
                 speed: kind.speed,
                 attack_damage: kind.attack_damage,

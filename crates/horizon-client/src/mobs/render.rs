@@ -105,7 +105,8 @@ pub fn body(m: &Mob) -> (String, String) {
     };
     if &*m.kind.id == "minecraft:player" {
         return (
-            "main".into(),
+            // PlayerRenderer: the slim model for a slim skin (the type's "slim" layer).
+            if m.slim { "slim" } else { "main" }.into(),
             m.skin.clone().unwrap_or_else(|| m.kind.texture.clone()),
         );
     }

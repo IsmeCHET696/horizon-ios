@@ -942,6 +942,8 @@ struct WorldRest {
     end_environment: Environment,
     behaviours: Behaviours,
     player_arm: Option<horizon_client::mobs::Part>,
+    /// The same arm of `player_slim`, for a slim skin.
+    player_arm_slim: Option<horizon_client::mobs::Part>,
     player_type: Option<Arc<horizon_client::mobs::MobType>>,
     /// `SpinAttackEffectModel` (Riptide's spinning boxes).
     spin_attack: Option<horizon_client::mobs::Part>,
@@ -1016,6 +1018,9 @@ impl Resources {
     }
     fn player_arm(&self) -> &Option<horizon_client::mobs::Part> {
         &self.rest().player_arm
+    }
+    fn player_arm_slim(&self) -> &Option<horizon_client::mobs::Part> {
+        &self.rest().player_arm_slim
     }
     fn player_type(&self) -> &Option<Arc<horizon_client::mobs::MobType>> {
         &self.rest().player_type
@@ -8920,14 +8925,22 @@ impl Game<'_> {
                 if hand == Hand::Off {
                     continue;
                 }
-                let Some(arm) = self.res.player_arm().clone() else {
+                // The player's own skin and its model (PlayerRenderer.renderRightHand), Steve until it loads.
+                let own = self.player_model.as_ref();
+                let slim = own.is_some_and(|m| m.slim);
+                let arm = if slim {
+                    self.res.player_arm_slim().clone()
+                } else {
+                    self.res.player_arm().clone()
+                };
+                let Some(arm) = arm else {
                     continue;
                 };
-                let Some(r) = self
-                    .gui
-                    .atlas
-                    .sprites
-                    .get("entity/player/wide/steve")
+                let sprites = &self.gui.atlas.sprites;
+                let Some(r) = own
+                    .and_then(|m| m.skin.as_deref())
+                    .and_then(|skin| sprites.get(skin))
+                    .or_else(|| sprites.get("entity/player/wide/steve"))
                     .copied()
                 else {
                     continue;
@@ -11619,6 +11632,7 @@ impl ApplicationHandler for Game<'_> {
             return;
         }
         self.poll_pads(event_loop);
+        self.sync_system_keyboard();
         if self.options.frames.is_some() && self.started.elapsed() > self.options.timeout {
             self.error = Some("frame-limited run timed out".into());
             event_loop.exit();
@@ -12571,6 +12585,8 @@ fn load_world_rest(
         mob_data,
         player_type: perspective::player_type(root),
         player_arm: horizon_client::mobs::load_model(root, "minecraft:player#main")
+            .and_then(|m| m.children.into_iter().find(|c| c.name == "right_arm")),
+        player_arm_slim: horizon_client::mobs::load_model(root, "minecraft:player_slim#main")
             .and_then(|m| m.children.into_iter().find(|c| c.name == "right_arm")),
         spin_attack: horizon_client::mobs::load_model(root, "minecraft:spin_attack#main"),
     })

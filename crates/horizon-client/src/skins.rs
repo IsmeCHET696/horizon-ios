@@ -20,6 +20,9 @@ pub struct Textures {
     pub cape: Option<String>,
     pub elytra: Option<String>,
     pub signed: bool,
+    /// The skin's `metadata.model` is `slim` (`PlayerSkin.Model.SLIM`, the
+    /// three-pixel arms); any other value or none is wide.
+    pub slim: bool,
 }
 
 /// The `getTexture` endpoint's valid URIs from Minecraft services discovery.
@@ -100,6 +103,13 @@ pub fn unpack(value: &str, signature: Signature, valid_uris: &[&str]) -> Texture
             .any(|u| url.starts_with(&u.replace("{textureId}", "")));
         if !allowed {
             return empty;
+        }
+        if kind == "SKIN" {
+            out.slim = texture
+                .get("metadata")
+                .and_then(|m| m.get("model"))
+                .and_then(|m| m.as_str())
+                == Some("slim");
         }
         let slot = match kind.as_str() {
             "SKIN" => &mut out.skin,
@@ -456,6 +466,24 @@ mod tests {
     }
 
     use super::*;
+
+    /// The skin's metadata names its model: `slim` is Alex's arms, anything
+    /// else (or no metadata, as most wide skins send) is Steve's.
+    #[test]
+    fn skin_metadata_names_the_slim_model() {
+        let slim = unpack(
+            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHBzOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlL2FiYyIsIm1ldGFkYXRhIjp7Im1vZGVsIjoic2xpbSJ9fX19",
+            Signature::Signed,
+            &TEXTURE_URIS,
+        );
+        assert!(slim.slim);
+        assert_eq!(
+            slim.skin.as_deref(),
+            Some("https://textures.minecraft.net/texture/abc")
+        );
+        assert!(!unpack("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHBzOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlL2FiYyJ9fX0=", Signature::Signed, &TEXTURE_URIS).slim);
+        assert!(!unpack("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHBzOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlL2FiYyIsIm1ldGFkYXRhIjp7Im1vZGVsIjoiZGVmYXVsdCJ9fX19", Signature::Signed, &TEXTURE_URIS).slim);
+    }
 
     #[test]
     fn sha1_and_base64() {

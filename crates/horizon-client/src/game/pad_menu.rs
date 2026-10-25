@@ -89,6 +89,8 @@ pub(super) struct MenuCursor {
     pub(super) osk: Option<Keyboard>,
     /// The keyboard was closed on this screen (it doesn't open by itself again).
     osk_dismissed: bool,
+    /// The system's keyboard was asked for (iOS: `sync_system_keyboard`).
+    system_keyboard: bool,
 }
 
 impl Game<'_> {
@@ -848,6 +850,25 @@ impl Game<'_> {
     }
 
     // ---- text fields ----
+
+    /// iPhone and iPad have no keyboard until one is asked for: it comes up while a text field has focus (a
+    /// server's address, chat, a sign...) and Horizon's own is not open over it, and goes away with the focus.
+    /// winit types its keys into the window as `KeyboardInput`, which the fields already read.
+    pub(super) fn sync_system_keyboard(&mut self) {
+        let title_field = self
+            .title
+            .as_mut()
+            .is_some_and(|t| t.focused_field().is_some());
+        let want = cfg!(target_os = "ios")
+            && (title_field || self.pad_typing())
+            && self.pad.menu.osk.is_none();
+        if want != self.pad.menu.system_keyboard {
+            self.pad.menu.system_keyboard = want;
+            if let Some(window) = &self.window {
+                window.set_ime_allowed(want);
+            }
+        }
+    }
 
     /// A text field has keyboard focus: chat, a sign, a book being written,
     /// a search box, the anvil's name, the title screens' and the options'

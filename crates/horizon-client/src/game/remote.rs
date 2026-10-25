@@ -2790,6 +2790,8 @@ impl Game<'_> {
             .map(|(uuid, textures)| (*uuid, textures.clone()))
             .collect();
         let mut resolved: Vec<(u128, String)> = Vec::new();
+        // PlayerSkin.model, which the model follows whether or not the texture is ready.
+        let slim: HashMap<u128, bool> = entries.iter().map(|(u, t)| (*u, t.slim)).collect();
         for (uuid, textures) in entries {
             // PlayerInfo.createSkinLookup: only the local player's own skin
             // may be unsigned.
@@ -2827,12 +2829,14 @@ impl Game<'_> {
                 .find(|m| m.id == id && &*m.kind.id == "minecraft:player")
             {
                 mob.skin = Some(skin.clone());
+                mob.slim = slim.get(&uuid).copied().unwrap_or(false);
             }
         }
         if let Some(skin) = own
             && let Some(mob) = self.player_model.as_mut()
         {
             mob.skin = Some(skin);
+            mob.slim = slim.get(&local).copied().unwrap_or(false);
         }
     }
     /// Puts a downloaded skin in an atlas skin slot: a free one, else the

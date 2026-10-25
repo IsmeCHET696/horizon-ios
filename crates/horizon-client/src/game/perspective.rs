@@ -158,7 +158,9 @@ pub(super) fn player_type(root: &Path) -> Option<Arc<MobType>> {
             ambient_interval: 80,
             flags: Default::default(),
             model: Arc::new(model),
-            layers: Default::default(),
+            layers: horizon_client::mobs::load_model(root, "minecraft:player_slim#main")
+                .map(|slim| [("slim".to_owned(), Arc::new(slim))].into_iter().collect())
+                .unwrap_or_default(),
             texture: "entity/player/wide/steve".into(),
             brain: Brain::Passive,
             anim: Anim::Humanoid { zombie_arms: false },

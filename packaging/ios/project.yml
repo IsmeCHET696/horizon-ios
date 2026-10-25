@@ -159,6 +159,8 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: dev.horizon.game.launcher
         PRODUCT_NAME: HorizonLauncherKit
+        # The project names AppIcon for the two apps; a framework has no icon, and its catalog none to find.
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
         SWIFT_VERSION: "5.0"
         SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1,2"

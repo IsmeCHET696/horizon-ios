@@ -406,7 +406,12 @@ impl Loading {
 
     fn menu_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
         match action {
-            Action::Quit => event_loop.exit(),
+            // iPhone and iPad: an app does not quit itself; Quit Game goes back to the launcher.
+            Action::Quit => {
+                if !horizon_ios_launcher::show() {
+                    event_loop.exit();
+                }
+            }
             Action::Options => self.open_menu_options(Page::Main),
             Action::Accessibility => self.open_menu_options(Page::Accessibility),
             Action::Language => self.open_menu_options(Page::Language),
@@ -700,6 +705,7 @@ mod tests {
             shown: false,
             menu: StartupMenu::default(),
             import: None,
+            brand: Default::default(),
             error: None,
         }
     }

@@ -32,6 +32,9 @@ pub(super) struct TouchInput {
     /// Clicks to release once a tick has passed: vanilla samples buttons once a tick, so a tap released in
     /// the same frame would be lost (the pad holds its short presses back the same way).
     late: Vec<(MouseButton, u64)>,
+    /// The button a finger held still on the world is holding down: attack to mine, or use to eat, drink or
+    /// draw a bow.
+    holding: Option<MouseButton>,
     clock: Option<Instant>,
 }
 
@@ -168,6 +171,28 @@ impl Game<'_> {
         }
     }
 
+    /// The held item is used for as long as the button stays down: something eaten or drunk (its
+    /// `consumable` component), or a bow, crossbow, trident, shield, spyglass, goat horn or brush.
+    fn touch_holds_use(&self) -> bool {
+        let Some(stack) = self.held() else {
+            return false;
+        };
+        matches!(
+            &*stack.item,
+            "minecraft:bow"
+                | "minecraft:crossbow"
+                | "minecraft:trident"
+                | "minecraft:shield"
+                | "minecraft:spyglass"
+                | "minecraft:goat_horn"
+                | "minecraft:brush"
+        ) || self
+            .res
+            .items()
+            .get(&stack.item)
+            .is_some_and(|info| info.consumable.is_some())
+    }
+
     fn touch_act(&mut self, out: Vec<Out>, scale: f32) -> Result<()> {
         for o in out {
             match o {
@@ -205,11 +230,23 @@ impl Game<'_> {
                     self.play_mouse(button, true)?;
                     self.touch.late.push((button, self.ticks));
                 }
+                // Holding still: what the hand holds decides, as in Pocket Edition. Food, potions and the items
+                // used for as long as they are held (a bow, a shield...) are used until the finger lifts;
+                // anything else mines.
                 Out::MineStart => {
                     self.touch_grab();
-                    self.play_mouse(MouseButton::Left, true)?;
+                    let button = if self.touch_holds_use() {
+                        MouseButton::Right
+                    } else {
+                        MouseButton::Left
+                    };
+                    self.touch.holding = Some(button);
+                    self.play_mouse(button, true)?;
                 }
-                Out::MineEnd => self.play_mouse(MouseButton::Left, false)?,
+                Out::MineEnd => {
+                    let button = self.touch.holding.take().unwrap_or(MouseButton::Left);
+                    self.play_mouse(button, false)?;
+                }
             }
         }
         Ok(())

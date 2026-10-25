@@ -245,8 +245,8 @@ struct PacksPage: View {
             store.reloadInstalled()
             await store.search(kind, query: query)
         }
-        .task(id: link.ready) {
-            if link.ready { await choices.load() }
+        .task(id: link.canList) {
+            if link.canList { await choices.load() }
         }
         .alert("Packs", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
             Button("OK", role: .cancel) {}
@@ -280,7 +280,7 @@ struct PacksPage: View {
                         ))
                         .labelsHidden()
                         .tint(Theme.accent)
-                        .disabled(!link.ready)
+                        .disabled(!link.canList)
                     }
                     .padding(.horizontal, 14)
                     .frame(minHeight: 50)
@@ -300,9 +300,9 @@ struct PacksPage: View {
                 }
             }
             .card()
-            Text(link.ready
+            Text(link.canList
                 ? "Switch a pack on to use it; hold one to delete it."
-                : "Packs can be switched on once the game has loaded.")
+                : "Packs can be switched on in a moment.")
                 .font(Theme.sans(11)).foregroundStyle(Theme.textFaint)
         }
     }
@@ -314,10 +314,10 @@ struct PacksPage: View {
             Haptics.done()
             let name = installed.file
             var said: String
-            if link.ready, let error = await choices.set(name, kind: kind, on: true) {
+            if link.canList, let error = await choices.set(name, kind: kind, on: true) {
                 said = "Downloaded \(name), but it couldn't be switched on: \(error)"
             } else {
-                said = link.ready ? "\(name) is downloaded and on." : "\(name) is downloaded. Switch it on once the game has loaded."
+                said = link.canList ? "\(name) is downloaded and on." : "\(name) is downloaded. Switch it on in a moment."
             }
             if let note = installed.note {
                 said += " " + note

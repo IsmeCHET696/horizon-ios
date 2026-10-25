@@ -128,6 +128,12 @@ struct StatusChips: View {
             Chip(tone: .warn, text: "Loading \(Int(progress * 100))%")
         case .needsFiles:
             Chip(tone: .bad, text: "No game files")
+        case .waiting:
+            if GameFolder.hasGameFiles {
+                Chip(tone: .good, text: "Minecraft \(link.version)")
+            } else {
+                Chip(tone: .bad, text: "No game files")
+            }
         case .unknown:
             Chip(tone: .quiet, text: "Starting")
         }

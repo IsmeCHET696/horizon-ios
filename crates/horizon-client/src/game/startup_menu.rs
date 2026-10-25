@@ -218,6 +218,17 @@ pub(super) fn spawn_loader(
     let handle = std::thread::Builder::new()
         .name("resource-loader".into())
         .spawn(move || {
+            // iPhone and iPad: nothing loads until the player starts the game from the launcher, whose
+            // Settings and Packs may have changed options.txt meanwhile (its resource packs above all).
+            let settings = if horizon_ios_launcher::wait_for_start() {
+                Settings::load(
+                    &std::env::current_dir()
+                        .unwrap_or_default()
+                        .join("options.txt"),
+                )
+            } else {
+                settings
+            };
             let mut pack_error = None;
             let root = packs::startup_root(&vanilla_root, &settings.resource_packs, &[])
                 .unwrap_or_else(|error| {

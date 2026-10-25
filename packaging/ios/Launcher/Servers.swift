@@ -31,10 +31,10 @@ struct ServersPage: View {
                     Label("Add", systemImage: "plus").font(Theme.sans(13, .semiBold))
                         .foregroundStyle(Theme.accentText).frame(minHeight: 44)
                 }
-                .disabled(!link.ready)
+                .disabled(!link.canList)
             }
-            if !link.ready {
-                EmptyNote(icon: "hourglass", text: "Your servers show here once the game has loaded.")
+            if !link.canList {
+                EmptyNote(icon: "hourglass", text: "Your servers show here in a moment.")
             } else if link.servers.isEmpty {
                 EmptyNote(icon: "globe", text: "No servers yet. Add one to keep it here.")
             } else {

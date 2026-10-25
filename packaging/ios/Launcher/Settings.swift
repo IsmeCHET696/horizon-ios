@@ -107,8 +107,8 @@ struct SettingsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PageTitle(title: "Settings", subtitle: "Changes apply in the game at once.")
-            if link.ready {
+            PageTitle(title: "Settings", subtitle: "Saved to the game's options.txt, and applied at once while it runs.")
+            if link.canList {
                 ForEach(GameOptions.groups, id: \.title) { group in
                     SectionHeader(title: group.title) {
                         Image(systemName: group.icon).foregroundStyle(Theme.textFaint)
@@ -132,7 +132,7 @@ struct SettingsPage: View {
                     .card()
                 }
             } else {
-                EmptyNote(icon: "hourglass", text: "The game's settings show here once it has loaded.")
+                EmptyNote(icon: "hourglass", text: "The game's settings show here in a moment.")
             }
 
             SectionHeader(title: "Game files")
@@ -142,8 +142,8 @@ struct SettingsPage: View {
             SecondaryButton(title: "What's New", icon: "sparkles") { showingNews = true }
             About(version: link.version)
         }
-        .task(id: link.ready) {
-            if link.ready {
+        .task(id: link.canList) {
+            if link.canList {
                 await model.load()
             }
         }

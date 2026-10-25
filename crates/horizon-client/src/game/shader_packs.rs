@@ -92,41 +92,47 @@ fn choose(pack: Option<&str>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// `shader-pack`: list the packs, or choose one (`off` for none). None for other commands. Files only, so the
+/// phone's launcher asks it before the game starts too (game/launcher.rs).
+pub(super) fn shader_pack_command(words: &[&str], line: &str) -> Result<Option<Value>> {
+    if words.first() != Some(&"shader-pack") {
+        return Ok(None);
+    }
+    let packs = horizon_shaders::discover(&game_dir().join("shaderpacks"));
+    // The name runs to the end of the line: pack names have spaces.
+    let arg = line
+        .trim_start()
+        .strip_prefix("shader-pack")
+        .map(str::trim)
+        .unwrap_or("");
+    match arg {
+        "" | "list" => {}
+        "off" => choose(None)?,
+        name => {
+            let Some(found) = packs.iter().find(|p| p.name == name) else {
+                return Err(format!("no shader pack {name} in shaderpacks/").into());
+            };
+            if let Some(problem) = &found.problem {
+                return Err(format!("shader pack {name} can't be used: {problem}").into());
+            }
+            choose(Some(name))?;
+        }
+    }
+    let list: Vec<Value> = packs
+        .iter()
+        .map(|p| json!({ "name": p.name, "problem": p.problem }))
+        .collect();
+    Ok(Some(json!({ "packs": list, "selected": chosen() })))
+}
+
 impl Game<'_> {
-    /// `shader-pack`: list the packs, or choose one (`off` for none). None for other commands.
+    /// `shader-pack` from the control socket.
     pub(super) fn shader_pack_control(
         &mut self,
         words: &[&str],
         line: &str,
     ) -> Result<Option<Value>> {
-        if words.first() != Some(&"shader-pack") {
-            return Ok(None);
-        }
-        let packs = horizon_shaders::discover(&game_dir().join("shaderpacks"));
-        // The name runs to the end of the line: pack names have spaces.
-        let arg = line
-            .trim_start()
-            .strip_prefix("shader-pack")
-            .map(str::trim)
-            .unwrap_or("");
-        match arg {
-            "" | "list" => {}
-            "off" => choose(None)?,
-            name => {
-                let Some(found) = packs.iter().find(|p| p.name == name) else {
-                    return Err(format!("no shader pack {name} in shaderpacks/").into());
-                };
-                if let Some(problem) = &found.problem {
-                    return Err(format!("shader pack {name} can't be used: {problem}").into());
-                }
-                choose(Some(name))?;
-            }
-        }
-        let list: Vec<Value> = packs
-            .iter()
-            .map(|p| json!({ "name": p.name, "problem": p.problem }))
-            .collect();
-        Ok(Some(json!({ "packs": list, "selected": chosen() })))
+        shader_pack_command(words, line)
     }
 
     /// Loads the chosen pack for the current dimension when either changed, and returns this frame's

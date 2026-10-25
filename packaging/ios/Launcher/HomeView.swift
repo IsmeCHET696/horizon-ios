@@ -183,7 +183,7 @@ private struct PlayPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             GameCard(link: link, device: device)
-            if case .needsFiles = link.phase {
+            if needsFiles {
                 GameFilesCard(download: download, missing: true)
             }
             if let last = link.worlds.first {
@@ -194,6 +194,12 @@ private struct PlayPage: View {
         }
         .animation(.easeInOut(duration: 0.25), value: link.phase)
         .animation(.easeInOut(duration: 0.25), value: link.worlds)
+    }
+
+    /// The game said it has nothing to load, or, before it starts, there are no game files to start it with.
+    private var needsFiles: Bool {
+        if case .needsFiles = link.phase { return true }
+        return link.phase == .waiting && !GameFolder.hasGameFiles
     }
 }
 

@@ -66,6 +66,8 @@ final class GameLink: ObservableObject {
     enum Phase: Equatable {
         /// No answer yet.
         case unknown
+        /// Not started: nothing loads until the player starts the game (Play, a world, a server).
+        case waiting
         /// Loading the game files, with how far along.
         case loading(Double)
         /// Nothing to load: the game waits for files (`import_screen.rs`), and says why.
@@ -94,12 +96,14 @@ final class GameLink: ObservableObject {
     private var queued: (() async -> [String: Any])?
 
     var ready: Bool { phase == .title }
+    /// Whether the worlds and servers can be read: they are files, so before the game starts too.
+    var canList: Bool { phase == .title || phase == .waiting }
 
     /// Follow the game while the launcher is up: quickly while it loads, slowly once it is at its title.
     func watch() async {
         while !Task.isCancelled {
             await refresh()
-            let pause: UInt64 = ready ? 3_000_000_000 : 400_000_000
+            let pause: UInt64 = ready || phase == .waiting ? 3_000_000_000 : 400_000_000
             try? await Task.sleep(nanoseconds: pause)
         }
     }
@@ -108,6 +112,7 @@ final class GameLink: ObservableObject {
         let state = await Bridge.send("launcher-state")
         let was = phase
         switch state["phase"] as? String {
+        case "waiting": phase = .waiting
         case "loading": phase = .loading(state["progress"] as? Double ?? 0)
         case "needs_files": phase = .needsFiles(state["reason"] as? String)
         case "title": phase = .title
@@ -116,6 +121,9 @@ final class GameLink: ObservableObject {
         }
         if let version = state["version"] as? String {
             self.version = version
+        }
+        if phase == .waiting, was != .waiting {
+            await reload()
         }
         if phase == .title, was != .title {
             await reload()
@@ -148,10 +156,11 @@ final class GameLink: ObservableObject {
 
     // MARK: - Going somewhere
 
-    /// Play: straight to the title screen, or, with a world, into it.
+    /// Play: start the game and go to its title screen, or, with a world, into it.
     func play(_ world: World? = nil) async {
         Haptics.launch()
         guard let world else {
+            await start()
             uncover()
             return
         }
@@ -180,9 +189,18 @@ final class GameLink: ObservableObject {
         await go("Joining \(address)") { await Bridge.send("connect \(address)") }
     }
 
-    /// Ask now, or as soon as the game reaches its title; uncover the game once it is on its way.
+    /// Let the game load, if it is still waiting to be started.
+    private func start() async {
+        if phase == .waiting || phase == .unknown {
+            _ = await Bridge.send("launcher-start")
+            phase = .loading(0)
+        }
+    }
+
+    /// Ask now, or start the game and ask as soon as it reaches its title; uncover the game once it is on its way.
     private func go(_ label: String, _ action: @escaping () async -> [String: Any]) async {
         launching = label
+        await start()
         if ready {
             await run(action)
         } else {

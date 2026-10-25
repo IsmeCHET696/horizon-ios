@@ -26,6 +26,100 @@ fn saves() -> Result<PathBuf> {
     Ok(std::env::current_dir()?.join("saves"))
 }
 
+/// The commands that read and write files and need no game: the worlds, the server list and status pings. The
+/// phone's launcher asks them before the game is started (game/launcher.rs). Some(reply) for these commands
+/// (Some(None): the reply comes later), None for others.
+pub(super) fn file_command(
+    words: &[&str],
+    line: &str,
+    reply: &Sender<String>,
+) -> Result<Option<Option<Value>>> {
+    let value = match words.first().copied().unwrap_or_default() {
+        "worlds" => {
+            let worlds: Vec<Value> = title::list_worlds(&saves()?)
+                    .iter()
+                    .map(|w| {
+                        json!({
+                            "folder": w.folder,
+                            "name": w.name,
+                            "mode": if w.creative { "creative" } else { "survival" },
+                            "last_played": w.modified.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
+                            "commands": w.commands,
+                            "version": w.version,
+                        })
+                    })
+                    .collect();
+            json!({ "worlds": worlds })
+        }
+        "servers" => {
+            let file = horizon_client::multiplayer::servers_file(&saves()?);
+            let servers: Vec<Value> = horizon_protocol::servers::load(&file)
+                .iter()
+                .map(|s| json!({ "name": s.name, "address": s.ip, "icon": s.icon }))
+                .collect();
+            json!({ "servers": servers })
+        }
+        "server-add" => {
+            let address = words.get(1).ok_or("server-add ADDRESS NAME")?;
+            let name = line
+                .trim_start()
+                .strip_prefix("server-add")
+                .and_then(|rest| rest.trim_start().strip_prefix(address))
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .unwrap_or("Minecraft Server");
+            let file = horizon_client::multiplayer::servers_file(&saves()?);
+            let mut list = horizon_protocol::servers::load(&file);
+            list.push(horizon_protocol::servers::ServerEntry::new(name, address));
+            horizon_protocol::servers::save(&file, &list)?;
+            json!({ "ok": true, "index": list.len() - 1 })
+        }
+        "server-remove" => {
+            let index: usize = words.get(1).ok_or("server-remove INDEX")?.parse()?;
+            let file = horizon_client::multiplayer::servers_file(&saves()?);
+            let mut list = horizon_protocol::servers::load(&file);
+            if index >= list.len() {
+                return Err(format!("no server at {index}; servers lists {}", list.len()).into());
+            }
+            let removed = list.remove(index);
+            horizon_protocol::servers::save(&file, &list)?;
+            json!({ "ok": true, "removed": removed.ip })
+        }
+        "server-ping" => {
+            let address = (*words.get(1).ok_or("server-ping ADDRESS")?).to_owned();
+            // A status ping takes up to its timeout: off the game thread, as the server list does.
+            let reply = reply.clone();
+            std::thread::spawn(move || {
+                let answer = match horizon_client::net::ping(&address, Duration::from_secs(5)) {
+                    Ok((status, ms)) => {
+                        let motd =
+                            horizon_client::component::to_text(&status["description"], &mut |s| {
+                                horizon_client::text::Text::literal(s)
+                            });
+                        json!({
+                            "ok": true,
+                            "address": address,
+                            "motd": motd.plain(),
+                            "online": status["players"]["online"],
+                            "max": status["players"]["max"],
+                            "version": status["version"]["name"],
+                            "ms": ms as u64,
+                            "icon": status["favicon"].as_str()
+                                .and_then(|url| url.strip_prefix("data:image/png;base64,"))
+                                .map(|b| b.replace('\n', "")),
+                        })
+                    }
+                    Err(e) => json!({ "error": e, "address": address }),
+                };
+                let _ = reply.send(answer.to_string());
+            });
+            return Ok(Some(None));
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(Some(value)))
+}
+
 impl Game<'_> {
     /// Some(reply) for these commands (Some(None): the reply comes later), None for others.
     pub(super) fn saves_control(
@@ -50,23 +144,10 @@ impl Game<'_> {
                 ))
             }
         };
+        if let Some(value) = file_command(words, line, reply)? {
+            return Ok(Some(value));
+        }
         let value = match words[0] {
-            "worlds" => {
-                let worlds: Vec<Value> = title::list_worlds(&saves()?)
-                    .iter()
-                    .map(|w| {
-                        json!({
-                            "folder": w.folder,
-                            "name": w.name,
-                            "mode": if w.creative { "creative" } else { "survival" },
-                            "last_played": w.modified.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
-                            "commands": w.commands,
-                            "version": w.version,
-                        })
-                    })
-                    .collect();
-                json!({ "worlds": worlds })
-            }
             "world-rename" => {
                 on_title()?;
                 let folder = folder()?;
@@ -140,72 +221,6 @@ impl Game<'_> {
                 let folder = title::new_world_folder(&saves()?, name);
                 self.open_world(&folder, Some(name), seed, creative, None)?;
                 json!({ "ok": true, "folder": folder, "name": name })
-            }
-            "servers" => {
-                let file = horizon_client::multiplayer::servers_file(&saves()?);
-                let servers: Vec<Value> = horizon_protocol::servers::load(&file)
-                    .iter()
-                    .map(|s| json!({ "name": s.name, "address": s.ip, "icon": s.icon }))
-                    .collect();
-                json!({ "servers": servers })
-            }
-            "server-add" => {
-                let address = words.get(1).ok_or("server-add ADDRESS NAME")?;
-                let name = line
-                    .trim_start()
-                    .strip_prefix("server-add")
-                    .and_then(|rest| rest.trim_start().strip_prefix(address))
-                    .map(str::trim)
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or("Minecraft Server");
-                let file = horizon_client::multiplayer::servers_file(&saves()?);
-                let mut list = horizon_protocol::servers::load(&file);
-                list.push(horizon_protocol::servers::ServerEntry::new(name, address));
-                horizon_protocol::servers::save(&file, &list)?;
-                json!({ "ok": true, "index": list.len() - 1 })
-            }
-            "server-remove" => {
-                let index: usize = words.get(1).ok_or("server-remove INDEX")?.parse()?;
-                let file = horizon_client::multiplayer::servers_file(&saves()?);
-                let mut list = horizon_protocol::servers::load(&file);
-                if index >= list.len() {
-                    return Err(
-                        format!("no server at {index}; servers lists {}", list.len()).into(),
-                    );
-                }
-                let removed = list.remove(index);
-                horizon_protocol::servers::save(&file, &list)?;
-                json!({ "ok": true, "removed": removed.ip })
-            }
-            "server-ping" => {
-                let address = (*words.get(1).ok_or("server-ping ADDRESS")?).to_owned();
-                // A status ping takes up to its timeout: off the game thread, as the server list does.
-                let reply = reply.clone();
-                std::thread::spawn(move || {
-                    let answer = match horizon_client::net::ping(&address, Duration::from_secs(5)) {
-                        Ok((status, ms)) => {
-                            let motd = horizon_client::component::to_text(
-                                &status["description"],
-                                &mut |s| horizon_client::text::Text::literal(s),
-                            );
-                            json!({
-                                "ok": true,
-                                "address": address,
-                                "motd": motd.plain(),
-                                "online": status["players"]["online"],
-                                "max": status["players"]["max"],
-                                "version": status["version"]["name"],
-                                "ms": ms as u64,
-                                "icon": status["favicon"].as_str()
-                                    .and_then(|url| url.strip_prefix("data:image/png;base64,"))
-                                    .map(|b| b.replace('\n', "")),
-                            })
-                        }
-                        Err(e) => json!({ "error": e, "address": address }),
-                    };
-                    let _ = reply.send(answer.to_string());
-                });
-                return Ok(Some(None));
             }
             _ => return Ok(None),
         };

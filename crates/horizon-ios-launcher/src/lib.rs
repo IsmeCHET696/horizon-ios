@@ -69,14 +69,61 @@ pub fn take() -> Vec<Request> {
         .collect()
 }
 
+/// Whether the game may start loading: not until the player starts it from the launcher (Play, a world, a
+/// server), so opening the app costs nothing but the launcher. Open from the first where no launcher is bundled.
+static STARTED: (Mutex<Option<bool>>, std::sync::Condvar) =
+    (Mutex::new(None), std::sync::Condvar::new());
+
+/// Wait for the player to start the game from the launcher; at once in a build or bundle without one. The
+/// resource loader's thread waits here, so the window and the launcher come up while nothing loads. True when
+/// it waited, so the options may have changed meanwhile (the launcher's Settings and Packs).
+pub fn wait_for_start() -> bool {
+    let (started, signal) = &STARTED;
+    let mut started = started.lock().unwrap_or_else(PoisonError::into_inner);
+    let open = *started.get_or_insert_with(|| !bundled());
+    if open {
+        return false;
+    }
+    while *started != Some(true) {
+        started = signal.wait(started).unwrap_or_else(PoisonError::into_inner);
+    }
+    true
+}
+
+/// Let the game start loading (the launcher's `launcher-start`, or a launcher that could not be shown).
+pub fn start() {
+    let (started, signal) = &STARTED;
+    *started.lock().unwrap_or_else(PoisonError::into_inner) = Some(true);
+    signal.notify_all();
+}
+
+/// Whether the game is still waiting to be started.
+pub fn waiting() -> bool {
+    let started = STARTED.0.lock().unwrap_or_else(PoisonError::into_inner);
+    started.is_none_or(|open| !open) && bundled()
+}
+
+/// Whether this bundle carries the launcher, which holds the game until it is started.
+fn bundled() -> bool {
+    #[cfg(target_os = "ios")]
+    return ios::framework().is_some();
+    #[cfg(not(target_os = "ios"))]
+    false
+}
+
 /// Load the launcher and show it over the game, once per run: the loading screen's window asks, and so does
-/// the game's when it makes its own. False when this build or bundle has none, or it was already shown.
+/// the game's when it makes its own. False when this build or bundle has none, or it was already shown. A
+/// launcher that can't be shown can't start the game either, so the game starts by itself then.
 pub fn present() -> bool {
     static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if SHOWN.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
-    show()
+    let shown = show();
+    if !shown {
+        start();
+    }
+    shown
 }
 
 /// Show the launcher over the game again (Quit Game, which an iPhone app does not do itself). False when this
@@ -119,15 +166,19 @@ mod ios {
         }));
     }
 
+    /// The launcher framework's binary in this bundle, if it has one.
+    pub fn framework() -> Option<CString> {
+        let framework = std::env::current_exe()
+            .ok()?
+            .parent()?
+            .join("Frameworks/HorizonLauncherKit.framework/HorizonLauncherKit");
+        framework
+            .exists()
+            .then(|| CString::new(framework.into_os_string().into_encoded_bytes()).ok())?
+    }
+
     pub fn present() -> bool {
-        let Some(path) = std::env::current_exe().ok().and_then(|exe| {
-            let framework = exe
-                .parent()?
-                .join("Frameworks/HorizonLauncherKit.framework/HorizonLauncherKit");
-            framework
-                .exists()
-                .then(|| CString::new(framework.into_os_string().into_encoded_bytes()).ok())?
-        }) else {
+        let Some(path) = framework() else {
             log::info!("Horizon: no launcher in this bundle; starting at the title screen.");
             return false;
         };
@@ -155,6 +206,12 @@ mod ios {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_desktop_never_waits_to_be_started() {
+        assert!(!waiting());
+        assert!(!wait_for_start());
+    }
 
     #[test]
     fn requests_come_out_in_order_and_answer_once() {

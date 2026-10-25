@@ -1,10 +1,12 @@
 //! The phone's launcher (packaging/ios/Launcher), answered: it speaks the control socket's language through
 //! `horizon_ios_launcher`'s queue, so `worlds`, `open`, `connect`, `options-set` and the rest mean what they
-//! mean to horizon-ctl. Three lines are its own: `launcher-state`, which says whether the game is starting,
-//! waiting for files or at its title; `import PATH`, which installs an archive the launcher downloaded; and
+//! mean to horizon-ctl. Four lines are its own: `launcher-start`, which lets the game load (it waits for the
+//! player to start it); `launcher-state`, which says whether the game waits to be started, is loading, waits
+//! for files or is at its title; `import PATH`, which installs an archive the launcher downloaded; and
 //! `launcher-world {json}`, Select World's actions for folders with spaces in their names.
 //!
-//! The loading window answers those two before there is a `Game` to ask; anything else waits for the title.
+//! The loading window answers the start, the state and imports before there is a `Game` to ask; anything else
+//! waits for the title.
 use super::{Game, Loading};
 use horizon_client::{
     Result,
@@ -116,6 +118,7 @@ impl Game<'_> {
                     request.answer(&state.to_string());
                 }
                 "import" => start_import(request),
+                "launcher-start" => request.answer(r#"{"ok":true}"#),
                 "launcher-world" => self.launcher_world(request),
                 _ => {
                     let (reply, answers) = mpsc::channel();
@@ -129,78 +132,163 @@ impl Game<'_> {
         deliver();
     }
 
-    /// `launcher-world {"action": "open"|"rename"|"backup"|"delete", "folder": ..., "name": ...}`: Select World
-    /// and Edit World by folder, for folders the control socket's word-split lines cannot name ("New World").
+    /// `launcher-world`: Select World's Play by folder here; the rest is files (`world_files`).
     fn launcher_world(&mut self, request: horizon_ios_launcher::Request) {
-        let answer = |request: horizon_ios_launcher::Request, value: Value| {
+        let Some(request) = world_files(request) else {
+            // Renamed or deleted: Select World reads the saves again.
+            if let Some(title) = self.title.as_mut() {
+                title.worlds_changed();
+            }
+            return;
+        };
+        // Only Play is left: it needs the title screen.
+        let args = world_args(&request.line);
+        let folder = args["folder"].as_str().unwrap_or_default().to_owned();
+        let answer = if self.title.is_none() {
+            json!({ "error": "a world is already open" })
+        } else {
+            match self.open_world(&folder, None, None, false, None) {
+                Ok(()) => json!({ "ok": true }),
+                Err(e) => json!({ "error": e.to_string() }),
+            }
+        };
+        request.answer(&answer.to_string());
+    }
+}
+
+/// `launcher-world {"action": "open"|"rename"|"backup"|"delete", "folder": ..., "name": ...}`'s arguments: Select
+/// World and Edit World by folder, for folders the control socket's word-split lines cannot name ("New World").
+fn world_args(line: &str) -> Value {
+    line.trim_start()
+        .strip_prefix("launcher-world")
+        .and_then(|rest| serde_json::from_str(rest).ok())
+        .unwrap_or_default()
+}
+
+/// Rename, Back Up and Delete, which are files and need no game; the request back for Play, which does.
+fn world_files(request: horizon_ios_launcher::Request) -> Option<horizon_ios_launcher::Request> {
+    let args = world_args(&request.line);
+    let (Some(action), Some(folder)) = (args["action"].as_str(), args["folder"].as_str()) else {
+        request.answer(r#"{"error":"launcher-world {\"action\", \"folder\"}"}"#);
+        return None;
+    };
+    let saves = std::env::current_dir().unwrap_or_default().join("saves");
+    let done = match action {
+        "open" => return Some(request),
+        "rename" => {
+            let name = args["name"].as_str().unwrap_or_default().trim();
+            if name.is_empty() {
+                Err("a world needs a name".into())
+            } else {
+                horizon_client::title::world_management::rename(&saves, folder, name)
+            }
+        }
+        "delete" => horizon_client::title::world_management::delete(&saves, folder),
+        "backup" => {
+            // A big world takes a while to zip: off the main thread, as Make Backup does.
+            let (reply, answers) = mpsc::channel();
+            let folder = folder.to_owned();
+            std::thread::spawn(move || {
+                let value = match horizon_client::title::world_management::backup(&saves, &folder) {
+                    Ok(bytes) => json!({ "ok": true, "bytes": bytes }),
+                    Err(e) => json!({ "error": format!("backup of {folder} failed: {e}") }),
+                };
+                let _ = reply.send(value.to_string());
+            });
+            PENDING.with_borrow_mut(|p| p.push((Waiting::Control(answers), request)));
+            return None;
+        }
+        _ => Err(format!("launcher-world: no action {action}").into()),
+    };
+    let answer = match done {
+        Ok(()) => json!({ "ok": true }),
+        Err(e) => json!({ "error": e.to_string() }),
+    };
+    request.answer(&answer.to_string());
+    None
+}
+
+/// The control lines that are only files (worlds, servers, pings: `saves_control::file_command`), answered
+/// without a game; the request back for anything else.
+fn file_request(request: horizon_ios_launcher::Request) -> Option<horizon_ios_launcher::Request> {
+    let words: Vec<&str> = request.line.split_whitespace().collect();
+    let (reply, answers) = mpsc::channel();
+    match super::saves_control::file_command(&words, &request.line, &reply) {
+        Ok(None) => Some(request),
+        Ok(Some(Some(value))) => {
             request.answer(&value.to_string());
-        };
-        let args: Value = request
-            .line
-            .trim_start()
-            .strip_prefix("launcher-world")
-            .and_then(|rest| serde_json::from_str(rest).ok())
-            .unwrap_or_default();
-        let (Some(action), Some(folder)) = (args["action"].as_str(), args["folder"].as_str())
-        else {
-            answer(
-                request,
-                json!({ "error": "launcher-world {\"action\", \"folder\"}" }),
-            );
-            return;
-        };
-        if self.title.is_none() {
-            answer(request, json!({ "error": "a world is already open" }));
-            return;
+            None
         }
-        let saves = std::env::current_dir().unwrap_or_default().join("saves");
-        let done = match action {
-            "open" => self.open_world(folder, None, None, false, None),
-            "rename" => {
-                let name = args["name"].as_str().unwrap_or_default().trim();
-                if name.is_empty() {
-                    Err("a world needs a name".into())
-                } else {
-                    horizon_client::title::world_management::rename(&saves, folder, name)
-                }
-            }
-            "delete" => horizon_client::title::world_management::delete(&saves, folder),
-            "backup" => {
-                // A big world takes a while to zip: off the game thread, as Make Backup does.
-                let (reply, answers) = mpsc::channel();
-                let folder = folder.to_owned();
-                std::thread::spawn(move || {
-                    let value =
-                        match horizon_client::title::world_management::backup(&saves, &folder) {
-                            Ok(bytes) => json!({ "ok": true, "bytes": bytes }),
-                            Err(e) => json!({ "error": format!("backup of {folder} failed: {e}") }),
-                        };
-                    let _ = reply.send(value.to_string());
-                });
-                PENDING.with_borrow_mut(|p| p.push((Waiting::Control(answers), request)));
-                return;
-            }
-            _ => Err(format!("launcher-world: no action {action}").into()),
-        };
-        if let Some(title) = self.title.as_mut() {
-            title.worlds_changed();
+        // Answered later, from a worker.
+        Ok(Some(None)) => {
+            PENDING.with_borrow_mut(|p| p.push((Waiting::Control(answers), request)));
+            None
         }
-        match done {
-            Ok(()) => answer(request, json!({ "ok": true })),
-            Err(e) => answer(request, json!({ "error": e.to_string() })),
+        Err(e) => {
+            request.answer(&json!({ "error": e.to_string() }).to_string());
+            None
         }
     }
 }
 
 impl Loading {
-    /// The launcher's requests before the game exists: its state, and imports, which is how a phone with no
-    /// game files gets them from the launcher. Game files that arrive end the wait for them.
+    /// `options-get KEY...` and `options-set KEY VALUE` before the game exists, on the settings it will be
+    /// made with, saved to options.txt as the options screen saves them (game/options.rs does the same in a
+    /// running game, where a change also applies at once).
+    fn launcher_options(&mut self, line: &str) -> Value {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let mut file = self.settings.to_file();
+        if words[0] == "options-get" {
+            let mut options = serde_json::Map::new();
+            for key in &words[1..] {
+                match file.describe(key) {
+                    Some(described) => options.insert((*key).to_owned(), described),
+                    None => return json!({ "error": format!("unknown option {key}") }),
+                };
+            }
+            return json!({ "options": options });
+        }
+        let Some(key) = words.get(1).copied() else {
+            return json!({ "error": "options-set KEY VALUE" });
+        };
+        let value = line
+            .trim_start()
+            .strip_prefix("options-set")
+            .and_then(|rest| rest.trim_start().strip_prefix(key))
+            .map(str::trim)
+            .unwrap_or_default();
+        if let Err(e) = file.set_text(key, value) {
+            return json!({ "error": e });
+        }
+        let mut settings = horizon_client::settings::Settings::from_file(file);
+        // Horizon's own files are not in options.txt.
+        std::mem::swap(&mut settings.horizon, &mut self.settings.horizon);
+        std::mem::swap(&mut settings.controller, &mut self.settings.controller);
+        std::mem::swap(&mut settings.extras, &mut self.settings.extras);
+        self.settings = settings;
+        self.settings.save(
+            &std::env::current_dir()
+                .unwrap_or_default()
+                .join("options.txt"),
+        );
+        json!({ "ok": true, "key": key, "option": self.settings.to_file().describe(key) })
+    }
+
+    /// The launcher's requests before the game exists: the start, its state, imports (how a phone with no game
+    /// files gets them from the launcher), the options, and what is only files: worlds, servers, pings.
+    /// Game files that arrive end the wait for them.
     pub(super) fn poll_launcher(&mut self) -> Result<()> {
         for request in horizon_ios_launcher::take() {
             let command = request.line.split_whitespace().next().unwrap_or_default();
             match command {
+                "launcher-start" => {
+                    horizon_ios_launcher::start();
+                    request.answer(r#"{"ok":true}"#);
+                }
                 "launcher-state" => {
-                    let state = if self.importing() {
+                    let state = if horizon_ios_launcher::waiting() {
+                        json!({ "phase": "waiting" })
+                    } else if self.importing() {
                         json!({ "phase": "needs_files", "reason": self.import_reason() })
                     } else {
                         json!({ "phase": "loading", "progress": self.progress.fraction() })
@@ -208,9 +296,35 @@ impl Loading {
                     request.answer(&state.to_string());
                 }
                 "import" => start_import(request),
-                _ => request.answer(
-                    &json!({ "error": "the game is still starting", "starting": true }).to_string(),
-                ),
+                "options-get" | "options-set" => {
+                    let answer = self.launcher_options(&request.line);
+                    request.answer(&answer.to_string());
+                }
+                "shader-pack" => {
+                    let words: Vec<&str> = request.line.split_whitespace().collect();
+                    let answer =
+                        match super::shader_packs::shader_pack_command(&words, &request.line) {
+                            Ok(value) => value.unwrap_or_default(),
+                            Err(e) => json!({ "error": e.to_string() }),
+                        };
+                    request.answer(&answer.to_string());
+                }
+                "launcher-world" => {
+                    if let Some(request) = world_files(request) {
+                        request.answer(
+                            &json!({ "error": "start the game to play a world", "starting": true })
+                                .to_string(),
+                        );
+                    }
+                }
+                _ => {
+                    if let Some(request) = file_request(request) {
+                        request.answer(
+                            &json!({ "error": "the game is still starting", "starting": true })
+                                .to_string(),
+                        );
+                    }
+                }
             }
         }
         if deliver() && self.importing() {

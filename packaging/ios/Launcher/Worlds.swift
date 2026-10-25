@@ -54,9 +54,9 @@ struct WorldsSection: View {
                         .foregroundStyle(Theme.accentText)
                         .frame(minHeight: 44)
                 }
-                .disabled(!link.ready)
+                .disabled(!link.canList)
             }
-            if !link.ready, link.worlds.isEmpty {
+            if !link.canList, link.worlds.isEmpty {
                 EmptyNote(icon: "hourglass", text: "Your worlds show here once the game has loaded.")
             } else if link.worlds.isEmpty {
                 EmptyNote(icon: "map", text: "No worlds yet. Make one with New, or bring one in as a .zip.")

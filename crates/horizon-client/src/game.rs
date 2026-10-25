@@ -157,6 +157,7 @@ mod sulfur_cubes;
 mod titles;
 mod tnt;
 mod totem;
+mod touch;
 mod trading;
 mod trial_spawner;
 mod trial_visuals;
@@ -1251,6 +1252,8 @@ struct Game<'a> {
     last_input: Instant,
     /// Controllers (Horizon's own).
     pad: pad::Pads,
+    /// Touch controls and the finger that is the pointer over menus (game/touch.rs).
+    touch: touch::TouchInput,
     frames: u64,
     /// Frames drawn with the player in the world, for `--world-frames`.
     world_frames: u64,
@@ -5015,6 +5018,9 @@ impl Game<'_> {
         {
             let tw = HudBatch::text_width(atlas, text);
             batch.text(atlas, text, (w - tw) / 2.0, h - 59.0, u32::MAX, true);
+        }
+        if show_hud {
+            self.draw_touch_controls(&mut batch);
         }
         self.draw_chat(&mut batch);
         self.draw_tab_list(&mut batch);
@@ -10906,6 +10912,7 @@ impl ApplicationHandler for Game<'_> {
                 WindowEvent::CloseRequested => {
                     self.begin_closing_save(true)?;
                 }
+                WindowEvent::Touch(touch) => self.touch_event(event_loop, touch)?,
                 WindowEvent::Resized(size) => {
                     if let Some(r) = &mut self.renderer {
                         r.resize(size.width, size.height);
@@ -11633,6 +11640,7 @@ impl ApplicationHandler for Game<'_> {
         }
         self.poll_pads(event_loop);
         self.sync_system_keyboard();
+        self.touch_frame();
         if self.options.frames.is_some() && self.started.elapsed() > self.options.timeout {
             self.error = Some("frame-limited run timed out".into());
             event_loop.exit();
@@ -11799,6 +11807,7 @@ impl<'a> Game<'a> {
             previous: now,
             last_input: now,
             pad: Default::default(),
+            touch: Default::default(),
             frames: 0,
             world_frames: 0,
             fps: 0.0,

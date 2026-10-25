@@ -250,6 +250,11 @@ fn number_format(f: &play::NumberFormat) -> horizon_client::scoreboard::NumberFo
     }
 }
 
+/// More menu slots than any menu has, for finding a game slot's menu number: the six-row chest's 90 (54 of
+/// its own, then the inventory's 36) is the most. 64 used to stop short of it, losing every inventory slot
+/// past the tenth.
+const MENU_SLOTS: i32 = 128;
+
 impl Game<'_> {
     /// Leave the title for a server (ConnectScreen): an empty world fed by the connection.
     pub(super) fn connect_server(&mut self, address: &str, name: &str) -> Result<()> {
@@ -3878,9 +3883,14 @@ impl Game<'_> {
             } else if let Some(stack) = held.as_ref() {
                 self.predict_item_on_block(stack, &hit);
             }
+            // MultiPlayerGameMode.useItemOn: a block that took the click (a door, a lever, a button, a
+            // container) returns SUCCESS, which swings the hand whatever it holds.
+            if reacts {
+                self.with_hand(hand, Game::swing_arm);
+            }
             if held_block {
-                if reacts
-                    || held
+                if !reacts
+                    && held
                         .as_ref()
                         .is_some_and(|stack| self.remote_can_place(&hit, stack))
                 {
@@ -4483,7 +4493,7 @@ impl Game<'_> {
             let slot = match slot {
                 None => -999,
                 Some(internal) => {
-                    match (0..64).find(|&s| Self::menu_slot(&menu, s) == Some(internal)) {
+                    match (0..MENU_SLOTS).find(|&s| Self::menu_slot(&menu, s) == Some(internal)) {
                         Some(s) => s as i16,
                         None => return false,
                     }
@@ -4556,7 +4566,7 @@ impl Game<'_> {
     /// such slot.
     pub(super) fn remote_slot_click(&mut self, internal: usize, button: i8, input: i32) -> bool {
         let (container, menu) = self.remote_menu();
-        let slot = (0..64).find(|&s| Self::menu_slot(&menu, s) == Some(internal));
+        let slot = (0..MENU_SLOTS).find(|&s| Self::menu_slot(&menu, s) == Some(internal));
         let Some(slot) = slot else { return false };
         let carried = self.to_network(&self.carried).map(|s| Hashed::of(&s));
         let state = self.remote.as_ref().map_or(0, |r| r.state_id);
@@ -5252,13 +5262,17 @@ impl horizon_client::interaction_input::InteractionWorld for RemoteInputWorld<'_
         self.0.using.is_some()
     }
     fn release_using(&mut self) {
+        let used = self.0.using.take();
         self.0.send(S::PlayerAction(play::PlayerAction {
             action: 6,
             pos: [0; 3],
             direction: 0,
             sequence: 0,
         }));
-        self.0.using = None;
+        // MultiPlayerGameMode.releaseUsingItem, then player.releaseUsingItem: Item.releaseUsing here too.
+        if let Some((_, ticks)) = used {
+            self.0.remote_release_trident(ticks);
+        }
     }
     fn start_attack(&mut self) -> bool {
         self.0.remote_start_attack()

@@ -110,7 +110,7 @@ impl Game<'_> {
         }
         true
     }
-    fn in_water_or_rain(&self) -> bool {
+    pub(super) fn in_water_or_rain(&self) -> bool {
         let Some(p) = &self.player else { return false };
         let (x, y, z) = (
             p.position.x.floor() as i32,
@@ -154,6 +154,41 @@ impl Game<'_> {
             p.auto_spin_attack_dmg = 0.0;
         }
     }
+    /// The half of a Riptide release every side runs: the push along the look and the spin
+    /// (`Player.startAutoSpinAttack`), lifted off the ground first.
+    fn riptide_launch(&mut self, riptide: u32) {
+        // trident_spin_attack_strength: 1.5 + 0.75 per level above the first.
+        let strength = 1.5 + 0.75 * (riptide as f32 - 1.0);
+        let d = view_vector(self.yaw, self.pitch);
+        if let Some(p) = self.player.as_mut() {
+            p.velocity = Vec3::new(
+                p.velocity.x + d[0] * f64::from(strength),
+                p.velocity.y + d[1] * f64::from(strength),
+                p.velocity.z + d[2] * f64::from(strength),
+            );
+            // Player.startAutoSpinAttack(20, 8, stack).
+            p.auto_spin_attack_ticks = 20;
+            p.auto_spin_attack_dmg = 8.0;
+            if p.ground.on_ground {
+                p.position.y += 1.2;
+            }
+        }
+    }
+    /// `TridentItem.releaseUsing` on a server's client (`MultiPlayerGameMode.releaseUsingItem` runs it after
+    /// sending RELEASE_USE_ITEM): the client moves its own player, so a Riptide trident launches it here. The
+    /// throw, the wear and the sound are the server's.
+    pub(super) fn remote_release_trident(&mut self, ticks: u32) {
+        if ticks < 10 {
+            return;
+        }
+        let Some(stack) = self.held().filter(|s| &*s.item == "minecraft:trident") else {
+            return;
+        };
+        let riptide = stack.enchantment_level("minecraft:riptide");
+        if riptide > 0 && self.in_water_or_rain() {
+            self.riptide_launch(riptide);
+        }
+    }
     /// `TridentItem.releaseUsing`.
     pub(super) fn release_trident(&mut self, ticks: u32) {
         if ticks < 10 {
@@ -175,22 +210,7 @@ impl Game<'_> {
                 return;
             }
             self.damage_held(1);
-            // trident_spin_attack_strength: 1.5 + 0.75 per level above the first.
-            let strength = 1.5 + 0.75 * (riptide as f32 - 1.0);
-            let d = view_vector(self.yaw, self.pitch);
-            if let Some(p) = self.player.as_mut() {
-                p.velocity = Vec3::new(
-                    p.velocity.x + d[0] * f64::from(strength),
-                    p.velocity.y + d[1] * f64::from(strength),
-                    p.velocity.z + d[2] * f64::from(strength),
-                );
-                // Player.startAutoSpinAttack(20, 8, stack).
-                p.auto_spin_attack_ticks = 20;
-                p.auto_spin_attack_dmg = 8.0;
-                if p.ground.on_ground {
-                    p.position.y += 1.2;
-                }
-            }
+            self.riptide_launch(riptide);
             let sound = format!("minecraft:item.trident.riptide_{}", riptide.min(3));
             self.audio.play(&sound, at, 1.0, 1.0);
             return;

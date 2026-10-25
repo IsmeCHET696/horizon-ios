@@ -84,6 +84,10 @@ targets:
     sources:
       - path: GameShell
       - path: Assets.xcassets
+    # The launcher, copied into Frameworks/ and signed with the game.
+    dependencies:
+      - target: HorizonLauncherKit
+        embed: true
     preBuildScripts:
       - name: Build the game with Cargo
         shell: /bin/bash
@@ -137,6 +141,27 @@ targets:
         # The name inside the bundle, so GameInfo.plist's CFBundleExecutable is true of this build as well as of
         # the hand-assembled one the workflow zips. Two ways to make the same app, one executable name.
         EXECUTABLE_NAME: Horizon
+
+  # The launcher, in SwiftUI, as a framework the game's bundle embeds: one .ipa. The game owns the process
+  # (winit runs UIKit's main loop), so the launcher cannot run first; horizon-ios-launcher dlopens this
+  # framework once the game's window is up and calls its horizon_launcher_present, which covers the game until
+  # Play. Its fonts are the theme crate's own, copied in as resources rather than checked in twice.
+  HorizonLauncherKit:
+    type: framework
+    platform: iOS
+    productName: HorizonLauncherKit
+    sources:
+      - path: Launcher
+      - path: ../../crates/horizon-theme/fonts
+        buildPhase: resources
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.horizon.game.launcher
+        PRODUCT_NAME: HorizonLauncherKit
+        SWIFT_VERSION: "5.0"
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
 
 # Two schemes, so the run destination picker says which app is about to launch: the probe shell and the game.
 schemes:

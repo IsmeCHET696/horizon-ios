@@ -10786,6 +10786,8 @@ impl ApplicationHandler for Game<'_> {
             Ok(r) => {
                 self.renderer = Some(r);
                 self.world_renderer_ready = true;
+                // iPhone and iPad: the launcher covers the game until Play (horizon-ios-launcher).
+                horizon_ios_launcher::present();
             }
             Err(e) => {
                 self.error = Some(e);

@@ -1264,6 +1264,7 @@ dependencies = [
  "horizon-dualsense",
  "horizon-friends",
  "horizon-gamecontroller",
+ "horizon-ios-launcher",
  "horizon-mods",
  "horizon-protocol",
  "horizon-server-files",
@@ -1335,6 +1336,14 @@ version = "0.1.0"
 dependencies = [
  "horizon-core",
  "horizon-world",
+]
+
+[[package]]
+name = "horizon-ios-launcher"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
 ]
 
 [[package]]

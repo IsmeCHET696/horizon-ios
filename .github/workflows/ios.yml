@@ -525,6 +525,15 @@ jobs:
           [ "$bundle" = dev.horizon.game ] \
             || { echo "::error::the game target's bundle id is $bundle, not dev.horizon.game"; exit 1; }
           plutil -lint "$app/Info.plist" >/dev/null
+          # The launcher is in, and this bundle -- not the hand-assembled one above -- becomes the game .ipa that
+          # goes out: it is the only one with the launcher (a Swift framework, which only Xcode builds) in it.
+          test -x "$app/Frameworks/HorizonLauncherKit.framework/HorizonLauncherKit" \
+            || { echo "::error::the game target embedded no HorizonLauncherKit.framework"; exit 1; }
+          rm -rf game-xcode Horizon-game-unsigned.ipa
+          mkdir -p game-xcode/Payload
+          cp -a "$app" game-xcode/Payload/
+          ( cd game-xcode && zip -qry ../Horizon-game-unsigned.ipa Payload )
+          test -s Horizon-game-unsigned.ipa || { echo "::error::no game .ipa written from the Xcode bundle"; exit 1; }
           {
             echo
             echo '## The game target in Xcode'
@@ -537,6 +546,14 @@ jobs:
             echo 'with your own Apple ID and press Run: the target builds the game with Cargo, replaces its own'
             echo 'placeholder executable with the result, and Xcode signs whatever is left.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.rust.outputs.required != 'false'
+        with:
+          name: horizon-ios-game-with-launcher
+          path: Horizon-game-unsigned.ipa
+          retention-days: 3
+          if-no-files-found: error
 
       # Both .ipa files are unsigned, so the only thing that can do anything with either is a person holding a
       # signing certificate and the device. This step closes that distance: it posts whatever bundles the run built

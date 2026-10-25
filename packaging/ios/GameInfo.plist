@@ -50,6 +50,16 @@
 	     sharing alone reaches it only from a computer (Finder, iTunes). -->
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- The launcher downloads game files from a link (packaging/ios/Launcher/GameFiles.swift). A computer on the
+	     same Wi-Fi rarely has a certificate, so plain http is allowed to local addresses only; anything on the
+	     internet still needs https, which also keeps an access token off the wire. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Horizon finds worlds opened to LAN, and takes game files from your computer on this network.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIDeviceFamily</key>

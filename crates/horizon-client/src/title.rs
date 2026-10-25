@@ -199,6 +199,32 @@ pub fn list_worlds(saves: &Path) -> Vec<WorldEntry> {
     worlds.sort_by_key(|w| std::cmp::Reverse(w.modified));
     worlds
 }
+/// The folder a new world named `name` gets in `saves` (`findResultFolder`).
+pub fn new_world_folder(saves: &Path, name: &str) -> String {
+    let base: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let base = if base.trim().is_empty() {
+        "World".to_owned()
+    } else {
+        base.trim().to_owned()
+    };
+    // FileUtil.findAvailableName: append (n) until unused.
+    let mut folder = base.clone();
+    let mut n = 1;
+    while saves.join(&folder).exists() {
+        folder = format!("{base} ({n})");
+        n += 1;
+    }
+    folder
+}
 fn choose_splash(text: &str, index: usize, date: (u32, u32)) -> Option<String> {
     // SplashManager checks SpecialDates before the resource list (local date).
     let special = match date {
@@ -541,29 +567,7 @@ impl Title {
     }
     /// The folder a new world named `name` gets (`findResultFolder`).
     fn target_folder(&self, name: &str) -> String {
-        let base: String = name
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        let base = if base.trim().is_empty() {
-            "World".to_owned()
-        } else {
-            base.trim().to_owned()
-        };
-        // FileUtil.findAvailableName: append (n) until unused.
-        let mut folder = base.clone();
-        let mut n = 1;
-        while self.saves.join(&folder).exists() {
-            folder = format!("{base} ({n})");
-            n += 1;
-        }
-        folder
+        new_world_folder(&self.saves, name)
     }
     fn buttons(&self, w: f32, h: f32) -> Vec<Button> {
         let (w, h) = (w.ceil(), h.ceil());

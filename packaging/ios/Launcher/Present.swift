@@ -2,11 +2,13 @@ import SwiftUI
 import UIKit
 
 /// The C entry point `horizon-ios-launcher` looks up: show the launcher over the game, which keeps running
-/// under it at its title screen. Play dismisses it; the game's Quit Game asks for it again. Called on the main
-/// thread; the presenting waits a turn of the run loop, because at startup the game's view controller may not
-/// be on screen yet while its first frame is being set up.
+/// under it at its title screen. Play dismisses it; the game's Quit Game asks for it again. `submit` is how the
+/// launcher asks the game things (Bridge.swift). Called on the main thread; the presenting waits a turn of the
+/// run loop, because at startup the game's view controller may not be on screen yet while its first frame is
+/// being set up.
 @_cdecl("horizon_launcher_present")
-public func horizonLauncherPresent() -> Bool {
+public func horizonLauncherPresent(_ submit: HorizonSubmit?) -> Bool {
+    Bridge.submit = submit
     Theme.registerFonts()
     DispatchQueue.main.async { present(attempts: 20) }
     return true

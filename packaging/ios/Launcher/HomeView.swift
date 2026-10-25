@@ -1,37 +1,58 @@
 import SwiftUI
 import UIKit
 
-/// The launcher's home screen, upright: the game, a Play button that uncovers it, and the player it plays as.
+/// The launcher, upright: Play (the game, its worlds and the player), Servers, Gallery, Settings and What's
+/// New. Everything it knows about the game it asks the game under it (GameLink.swift, Bridge.swift).
 struct HomeView: View {
     /// Play: uncover the game (Present.swift).
     var onPlay: () -> Void
+    @StateObject private var link = GameLink()
+    @StateObject private var device = DeviceStatus()
+    @StateObject private var download = GameFilesDownload()
     @StateObject private var player = PlayerName()
     @StateObject private var head = SkinHead()
     @State private var editingName = false
     @State private var nameDraft = ""
     @State private var nameRejected = false
+    @State private var tab = Tab.play
+
+    enum Tab: Hashable {
+        case play, servers, gallery, settings, news
+    }
 
     // Spelled out: a private property makes the memberwise one private, and Present.swift builds this view.
     init(onPlay: @escaping () -> Void = {}) {
         self.onPlay = onPlay
+        // The bar under the pages, in the launcher's colours rather than the system's grey.
+        let bar = UITabBarAppearance()
+        bar.configureWithOpaqueBackground()
+        bar.backgroundColor = UIColor(Theme.background)
+        bar.shadowColor = UIColor(Theme.border)
+        UITabBar.appearance().standardAppearance = bar
+        UITabBar.appearance().scrollEdgeAppearance = bar
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                GameCard(onPlay: onPlay)
-                PlayerCard(name: player.name, face: head.face, edit: editName)
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 12)
-            .padding(.bottom, 24)
-            .frame(maxWidth: 460)
-            .frame(maxWidth: .infinity)
+        TabView(selection: $tab) {
+            page(refresh: { await link.reload() }) { PlayPage(link: link, device: device, download: download, player: player, head: head,
+                            editName: editName) }
+                .tabItem { Label("Play", systemImage: "play.fill") }
+                .tag(Tab.play)
+            page(refresh: { await link.reloadServers() }) { ServersPage(link: link) }
+                .tabItem { Label("Servers", systemImage: "globe") }
+                .tag(Tab.servers)
+            page { GalleryPage() }
+                .tabItem { Label("Gallery", systemImage: "photo.on.rectangle") }
+                .tag(Tab.gallery)
+            page { SettingsPage(link: link, download: download) }
+                .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                .tag(Tab.settings)
+            page { NewsPage() }
+                .tabItem { Label("What's New", systemImage: "sparkles") }
+                .tag(Tab.news)
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Header(name: player.name, face: head.face, editName: editName)
-                .frame(maxWidth: 460).frame(maxWidth: .infinity).background(Theme.background)
-        }
+        .tint(Theme.accentText)
+        .onChange(of: tab) { _ in Haptics.tap() }
         // The offline name the game plays with.
         .alert("Player name", isPresented: $editingName) {
             TextField("Name", text: $nameDraft)
@@ -49,9 +70,34 @@ struct HomeView: View {
         } message: {
             Text("Use 1 to 16 letters, digits or symbols, with no spaces.")
         }
-        .background(Theme.background.ignoresSafeArea())
+        .alert("Something went wrong", isPresented: Binding(
+            get: { link.problem != nil },
+            set: { if !$0 { link.problem = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(link.problem ?? "")
+        }
         // The face follows the name: the skin of the Minecraft account that has it.
         .task(id: player.name) { await head.load(player.name) }
+        .task {
+            link.uncover = onPlay
+            await link.watch()
+        }
+    }
+
+    /// One tab's page: the header bar over a scrolling column, on the launcher's background.
+    private func page<Content: View>(refresh: (() async -> Void)? = nil,
+                                     @ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            content().pageColumn()
+        }
+        .refreshable { await refresh?() }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Header(name: player.name, face: head.face, editName: editName)
+                .frame(maxWidth: 520).frame(maxWidth: .infinity).background(Theme.background)
+        }
+        .background(Theme.background.ignoresSafeArea())
     }
 
     private func editName() {
@@ -81,8 +127,8 @@ private struct Header: View {
             }
             .accessibilityLabel("Player name: \(name ?? "not set")")
         }
-        .padding(.horizontal, 24)
-        .frame(height: 66)
+        .padding(.horizontal, 20)
+        .frame(height: 62)
         .background(Theme.background)
     }
 }
@@ -99,7 +145,7 @@ private struct HorizonMark: View {
 }
 
 /// The player's skin face, its pixels kept sharp; the name's first letter until a skin is found.
-private struct Avatar: View {
+struct Avatar: View {
     let name: String?
     let face: UIImage?
     let size: CGFloat
@@ -123,16 +169,45 @@ private struct Avatar: View {
     }
 }
 
-// MARK: - The game
+// MARK: - Play
+
+private struct PlayPage: View {
+    @ObservedObject var link: GameLink
+    @ObservedObject var device: DeviceStatus
+    @ObservedObject var download: GameFilesDownload
+    @ObservedObject var player: PlayerName
+    @ObservedObject var head: SkinHead
+    let editName: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            GameCard(link: link, device: device)
+            if case .needsFiles = link.phase {
+                GameFilesCard(download: download, missing: true)
+            }
+            if let last = link.worlds.first {
+                ContinueCard(world: last, link: link)
+            }
+            WorldsSection(link: link)
+            PlayerCard(name: player.name, face: head.face, edit: editName)
+        }
+        .animation(.easeInOut(duration: 0.25), value: link.phase)
+        .animation(.easeInOut(duration: 0.25), value: link.worlds)
+    }
+}
 
 private struct GameCard: View {
-    let onPlay: () -> Void
+    @ObservedObject var link: GameLink
+    @ObservedObject var device: DeviceStatus
 
     var body: some View {
         VStack(spacing: 0) {
-            Hero()
-            PlayButton(action: onPlay)
-                .padding(16)
+            Hero(version: link.version)
+            VStack(spacing: 12) {
+                StatusChips(link: link, device: device)
+                PlayButton(link: link)
+            }
+            .padding(16)
         }
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -141,17 +216,31 @@ private struct GameCard: View {
 }
 
 private struct Hero: View {
+    let version: String
+    /// Picked once per showing, as the title screen picks one per start.
+    @State private var splash = Splash.pick()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
                 Rectangle().fill(Theme.ready).frame(width: 5, height: 5)
-                Text("MINECRAFT 26.3").font(Theme.mono(9)).foregroundStyle(Theme.text)
+                Text("MINECRAFT \(version)").font(Theme.mono(9)).foregroundStyle(Theme.text)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(Color(red: 16 / 255, green: 13 / 255, blue: 32 / 255, opacity: 0.8), in: RoundedRectangle(cornerRadius: 4))
             VStack(alignment: .leading, spacing: 6) {
                 Text("Horizon").font(Theme.pixel(44)).foregroundStyle(Theme.text)
+                    .overlay(alignment: .topTrailing) {
+                        if let splash {
+                            Splash(text: splash)
+                                .offset(x: 70, y: 18)
+                                .onTapGesture {
+                                    Haptics.tap()
+                                    self.splash = Splash.pick()
+                                }
+                        }
+                    }
                 Text("Your next world is waiting.").font(Theme.sans(12)).foregroundStyle(Color(hex: 0xDDD2ED))
             }
             .padding(.top, 35)
@@ -179,21 +268,92 @@ private struct Hero: View {
     }
 }
 
+/// Play, in every state the game can be in: loading (the bar fills behind the word), waiting to take the
+/// player somewhere (it says where, and can be cancelled), and with no game files (it says so).
 private struct PlayButton: View {
-    let action: () -> Void
+    @ObservedObject var link: GameLink
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Kit.image("play")
-                Text("Play").font(Theme.pixel(27)).foregroundStyle(Theme.text)
+        VStack(spacing: 8) {
+            Button {
+                Task { await link.play() }
+            } label: {
+                HStack(spacing: 10) {
+                    if link.launching != nil {
+                        ProgressView().tint(Theme.text)
+                    } else {
+                        Kit.image("play")
+                    }
+                    Text(label).font(Theme.pixel(label.count > 12 ? 20 : 27)).foregroundStyle(Theme.text)
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                }
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 54, maxHeight: 54)
+                .background(alignment: .leading) {
+                    GeometryReader { size in
+                        ZStack(alignment: .leading) {
+                            (missing ? Theme.surfaceDisabled : Theme.accent.opacity(fill < 1 ? 0.55 : 1))
+                            if fill < 1 {
+                                Theme.accent.frame(width: size.size.width * fill)
+                            }
+                        }
+                    }
+                }
+                // The design's lit top edge: a one-point border on the top side only.
+                .overlay(alignment: .top) { (missing ? Color.clear : Theme.accentEdge).frame(height: 1) }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .animation(.easeOut(duration: 0.3), value: fill)
             }
-            .frame(maxWidth: .infinity, minHeight: 54, maxHeight: 54)
-            .background(Theme.accent)
-            // The design's lit top edge: a one-point border on the top side only.
-            .overlay(alignment: .top) { Theme.accentEdge.frame(height: 1) }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(PressStyle())
+            .disabled(missing || link.launching != nil)
+            if link.launching != nil {
+                Button("Cancel") { link.cancelLaunch() }
+                    .font(Theme.sans(12, .semiBold)).foregroundStyle(Theme.textMuted)
+            }
         }
+    }
+
+    private var missing: Bool {
+        if case .needsFiles = link.phase { return true }
+        return false
+    }
+
+    /// How full the bar is: the loading progress, full once the game is ready.
+    private var fill: Double {
+        if case let .loading(progress) = link.phase { return max(progress, 0.04) }
+        return 1
+    }
+
+    private var label: String {
+        if let launching = link.launching { return launching }
+        return missing ? "Game files needed" : "Play"
+    }
+}
+
+/// The world played last, one tap away.
+private struct ContinueCard: View {
+    let world: World
+    @ObservedObject var link: GameLink
+
+    var body: some View {
+        Button {
+            Task { await link.play(world) }
+        } label: {
+            HStack(spacing: 12) {
+                WorldIcon(world: world, size: 56)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("CONTINUE").font(Theme.mono(8)).foregroundStyle(Theme.accentText)
+                    Text(world.name).font(Theme.pixel(19)).foregroundStyle(Theme.text).lineLimit(1)
+                    Text(world.subtitle).font(Theme.sans(11)).foregroundStyle(Theme.textMuted).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "play.circle.fill").font(.system(size: 30)).foregroundStyle(Theme.accentBright)
+            }
+            .padding(12)
+            .card()
+        }
+        .buttonStyle(PressStyle())
+        .disabled(link.launching != nil)
     }
 }
 
@@ -219,7 +379,6 @@ private struct PlayerCard: View {
             }
         }
         .padding(14)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border))
+        .card()
     }
 }

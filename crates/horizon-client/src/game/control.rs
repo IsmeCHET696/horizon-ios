@@ -134,7 +134,11 @@ impl Game<'_> {
         }
     }
 
-    fn answer(&mut self, request: horizon_client::control::Request, event_loop: &ActiveEventLoop) {
+    pub(super) fn answer(
+        &mut self,
+        request: horizon_client::control::Request,
+        event_loop: &ActiveEventLoop,
+    ) {
         let reply = match self.control_command(&request.line, &request.reply, event_loop) {
             Ok(Some(value)) => value,
             // Deferred: the command keeps its own reply channel.
@@ -764,7 +768,7 @@ impl Game<'_> {
         Ok(())
     }
 
-    fn screen_name(&self) -> &'static str {
+    pub(super) fn screen_name(&self) -> &'static str {
         if self.screen == Screen::Win {
             return "win";
         }

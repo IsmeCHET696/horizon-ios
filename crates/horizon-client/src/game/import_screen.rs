@@ -114,15 +114,25 @@ impl Loading {
             }
         }
         if ready {
-            // Dropping the listener closes the port before the game starts looking at anything.
-            let home = self
-                .import
-                .take()
-                .map(|import| import.home)
-                .unwrap_or_default();
-            return self.load_the_files_that_arrived(home);
+            return self.files_arrived();
         }
         Ok(())
+    }
+
+    /// Game files are in place (over Wi-Fi, or downloaded by the phone's launcher): stop waiting and load them.
+    pub(super) fn files_arrived(&mut self) -> Result<()> {
+        // Dropping the listener closes the port before the game starts looking at anything.
+        let home = self
+            .import
+            .take()
+            .map(|import| import.home)
+            .unwrap_or_default();
+        self.load_the_files_that_arrived(home)
+    }
+
+    /// Why the loader found nothing to start, as the screen says it.
+    pub(super) fn import_reason(&self) -> Option<&str> {
+        self.import.as_ref().map(|import| import.reason.as_str())
     }
 
     /// Start the loader again on the files that arrived, as if the first attempt had found them.

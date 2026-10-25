@@ -3,8 +3,8 @@ import SwiftUI
 
 // The phone's launcher: the home screen from the Figma design (UI, node 40:168), drawn with Horizon's own
 // fonts from crates/horizon-theme/fonts. It is a framework the game's bundle embeds, not an app: the game owns
-// the process, and shows this over itself through Present.swift. Play uncovers the game; the other buttons are
-// still placeholders.
+// the process, and shows this over itself through Present.swift. Play uncovers the game; everything else asks
+// the game through Bridge.swift.
 
 /// The framework's own bundle: its images and fonts are there, not in the app's.
 final class Kit {
@@ -29,6 +29,11 @@ enum Theme {
     static let notice = Color(hex: 0x2E2149)
     static let noticeBorder = Color(hex: 0x483460)
     static let ready = Color(hex: 0x5BD7A0)
+    static let warn = Color(hex: 0xF2C14E)
+    static let danger = Color(hex: 0xF06A6A)
+    /// The title screen's splash yellow and its drop shadow, a quarter of it (`SplashRenderer`, title.rs).
+    static let splash = Color(hex: 0xFFFF00)
+    static let splashShadow = Color(hex: 0x3F3F00)
     static let text = Color(hex: 0xF5F1FF)
     static let textMuted = Color(hex: 0xA9A1BC)
     static let textFaint = Color(hex: 0x777085)

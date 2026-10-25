@@ -81,6 +81,7 @@ mod lan_stations;
 mod lan_trading;
 mod lan_vehicles;
 mod lan_waypoints;
+mod launcher;
 mod leads;
 mod level_particles;
 mod levels;
@@ -11654,6 +11655,7 @@ impl ApplicationHandler for Game<'_> {
         }
         self.tick_server_packs();
         self.poll_control(event_loop);
+        self.poll_launcher(event_loop);
         if self.pending_save.is_some() {
             return;
         }
@@ -13081,7 +13083,9 @@ impl Loading {
             self.poll_import()
         } else {
             self.poll_menu_resources()
-        } {
+        }
+        .and_then(|()| self.poll_launcher())
+        {
             self.error = Some(error);
             event_loop.exit();
             return;

@@ -50,6 +50,8 @@ Development builds that link quickly: `cargo build --profile fast -p horizon-cli
 | `--creative` | Creative mode (instant breaking, pick block) |
 | `--render-distance N` | Chunks, 2..64 (default 12) |
 | `--resources PATH` | Prepared resource directory |
+| `--pack-resources PATH` | Write `PATH` as one `.zip` a phone can import, then exit |
+| `--out PATH` | Where `--pack-resources` writes it (default: the folder's name, plus `.zip`, beside it) |
 
 | Control | Action |
 | --- | --- |
@@ -225,6 +227,25 @@ to the target machine (same OS and architecture), unpack it and run
 Saves and `options.txt` go to `~/.local/share/horizon` (or `$HORIZON_HOME`), so
 unpacking an update keeps them. The archive contains Mojang assets: keep it
 private.
+
+### Carry your game files to a phone
+
+The iOS build ships with no assets in it -- the workflow refuses any bundle
+containing `horizon-resources.json`, and the phone's own bundle is read-only
+while the game runs -- so a phone is given its files by the game it already has
+on the computer that prepared them:
+
+```sh
+horizon-client --pack-resources .local/horizon-client/26.3 --out Horizon-26.3.zip
+```
+
+One archive, then either door: open the address the phone shows and drop the
+file in, or copy the same `.zip` into the app's `Documents` folder with a cable.
+A world and a resource pack go in the same way, and the phone tells them apart
+by what is at the archive's root. [Running the game on an
+iPhone](../packaging/ios/README.md#bringing-the-game-files-across) is the
+detail. This archive holds Mojang's assets too, so it goes nowhere but your own
+devices.
 
 ## How it fits together
 

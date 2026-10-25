@@ -133,17 +133,76 @@ each, so nothing in the render path has to care.
   land in `Documents/saves`, settings in `Documents/options.txt`, pack caches in `Documents/.horizon-cache`.
 - The log is `Library/Application Support/horizon/logs/latest.log` -- the container Xcode's *Devices and
   Simulators* window downloads, and the way to read what happened when nothing appeared.
-- Assets: `Options::read` looks for `horizon-resources.json` in a `resources` folder **beside the executable**,
-  which on a phone means inside the bundle. In Xcode, add your prepared `.local/horizon-client/26.3` folder to
-  the **Horizon game** target as a folder reference with a path in bundle of `resources` (produce folders: keep
-  their name or rename it there). Without it the game has no blocks, no textures and no language file, and says
-  so in the log rather than crashing quietly.
-- The fallback path is `.local/horizon-client/26.3` under the working directory, i.e.
-  `Documents/.local/horizon-client/26.3`. The Files app hides dotfolders, which is why the bundle is the route
-  written above. `UIFileSharingEnabled` in `GameInfo.plist` is what makes `Documents` visible there at all.
+- `Options::read` looks for `horizon-resources.json` in three places, in this order: a `resources` folder
+  **beside the executable**, which on a phone means inside the bundle; then `Documents/resources`, which is
+  where an import unpacks; then `Documents/.local/horizon-client/26.3`, the desktop fallback, which the Files
+  app neither shows nor lets you create.
+- The first stop is a developer's own: in Xcode, add your prepared `.local/horizon-client/26.3` to the
+  **Horizon game** target as a folder reference with a path in bundle of `resources` (produce folders: keep
+  their name or rename it there). It is fine to sign for yourself and it is the fastest debug loop, but a
+  bundle built that way is not publishable -- see the next section -- which is why the game does not stop
+  looking at the bundle.
+- `UIFileSharingEnabled` in `GameInfo.plist` is what makes `Documents` visible to the Files app and to a cable
+  at all, and is the reason the second stop is a folder a player can reach.
 
-Nobody has run this on a device yet. What is measured is in the workflow's summary: the game compiles for the
-target, links, and comes out of Xcode's bundle as the same bytes Cargo wrote.
+### Bringing the game files across
+
+A published `.ipa` carries no assets: `horizon-resources.json` in a bundle is a refusal in
+`.github/workflows/ios.yml`, and the bundle a phone installs is read-only while the game runs anyway. So the
+files come from the computer that prepared them, as one ZIP, through one of two doors.
+
+On the computer, with the same `horizon-client` a player already has:
+
+```sh
+horizon-client --pack-resources .local/horizon-client/26.3 --out Horizon-26.3.zip
+```
+
+The archive's one top folder is the directory you pointed at, which is exactly what compressing the folder by
+hand produces: `crates/horizon-client/src/import.rs` reads both shapes, and refuses an archive that is none of
+its three kinds before it writes a single file. Roughly 589 MB unpacked, so allow for the archive and the tree
+both being on the phone at once.
+
+**Over Wi-Fi, while the phone is asking.** A game that cannot start does not exit; it keeps its window, shows the
+loader's own reason, and asks for its files at `http://<address>:<port>/` with six digits beside it
+(`crates/horizon-client/src/game/import_screen.rs`, drawn with the one atlas that exists before Mojang's files
+do). Open that address on the computer, choose the archive, type the digits, and watch the bar on the phone. Or,
+from a terminal:
+
+```sh
+curl --upload-file Horizon-26.3.zip "http://<address>:<port>/upload?name=Horizon-26.3&pin=<digits>"
+```
+
+`name` is what a world or a pack is filed under, so it is worth passing; the game files land in
+`Documents/resources` whatever it says.
+
+The listener is up only while that screen is up, it takes one archive at a time, and the digits -- never in the
+page it serves -- are what stops anyone else on the network from writing into the app. When the archive lands,
+the port is closed, the game files are in `Documents/resources`, and the loader starts again on them. A wrong
+code answers `403` and writes nothing. If what arrived still is not enough to start the game, the screen comes
+back with the new reason and asks again on a new port with new digits, so a bad archive is one more send away
+rather than a dead end.
+
+**By cable, with no network involved.** Copy the same `.zip` into the app's `Documents` folder -- Finder's
+*Files* tab, or iTunes' *File Sharing*, or any manager that gets there -- and launch. `main.rs` unpacks what it
+finds there before the game looks for its resources, then deletes the archive.
+
+Both doors route by the archive's root, so one file format carries three things: `horizon-resources.json` is
+the game files, `level.dat` is a world (into `Documents/saves`, never over one that exists), `pack.mcmeta` is a
+resource pack, which stays a `.zip` because the game reads those where they are. An archive that will not
+unpack is renamed `<name>.zip.failed` rather than retried every launch, and an unpacking that a flat battery
+interrupts is finished, or its old tree put back, on the next start -- `import::recover`, before anything reads
+the folder it was working on.
+
+What is measured of this, on Linux rather than on a phone: a game started with no files stayed open, refused a
+wrong code with `403` and wrote nothing, took a real archive posted to the address it logged, unpacked it into
+`Documents/resources`, closed the port and started the loader again -- then asked again on a fresh port and code
+when that archive turned out to be a three-file stub. `HORIZON_IMPORT_SCREEN=1` is the same decision the iOS
+build makes on its own, which is how that run was possible without a phone.
+
+What is left to see on a device: the screen's text is drawn from `horizon-theme`'s embedded font, so it needs
+nothing installed, but nobody has read it on a real phone yet. Nobody has run the game on a device either; what
+is measured there is in the workflow's summary -- the game compiles for the target, links, and comes out of
+Xcode's bundle as the same bytes Cargo wrote.
 
 ## Why the game, when it comes, is the Cargo executable and not another static library
 

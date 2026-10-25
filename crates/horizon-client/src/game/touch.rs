@@ -27,12 +27,27 @@ pub(super) struct TouchInput {
     fingers: Touches,
     /// A touch has been seen: the controls are drawn (from the start on iPhone and iPad).
     seen: bool,
-    /// The finger that is the pointer over a menu, and where it last was (GUI pixels).
-    menu: Option<(u64, (f32, f32))>,
+    /// The finger that is the pointer over a menu.
+    menu: Option<MenuFinger>,
     /// Clicks to release once a tick has passed: vanilla samples buttons once a tick, so a tap released in
     /// the same frame would be lost (the pad holds its short presses back the same way).
     late: Vec<(MouseButton, u64)>,
     clock: Option<Instant>,
+}
+
+/// A finger over a menu. Its press waits for a frame drawn with the pointer under it, and its release for a
+/// frame after the press: screens find what is under the pointer while drawing, so a pointer that moved and
+/// pressed in one go would press whatever was under the old position (or nothing).
+struct MenuFinger {
+    id: u64,
+    /// Where the scrolling last caught up with the finger (GUI pixels).
+    scrolled: (f32, f32),
+    /// Loop iterations since it went down.
+    frames: u8,
+    pressed: bool,
+    lifted: bool,
+    /// It went down on the close button, which already acted: the rest of it is ignored.
+    closed: bool,
 }
 
 /// The key a button stands for: the vanilla default of its mapping.
@@ -112,10 +127,11 @@ impl Game<'_> {
 
     /// Once a frame: a held finger starts mining, held-back clicks release, and a screen that opened over the
     /// game lets go of every finger on it.
-    pub(super) fn touch_frame(&mut self) {
+    pub(super) fn touch_frame(&mut self, event_loop: &ActiveEventLoop) {
         if !self.touch_shown() {
             return;
         }
+        self.touch_menu_frame(event_loop);
         let playing = self.touch_playing();
         let out = if playing {
             let now = self.touch_now();
@@ -141,9 +157,12 @@ impl Game<'_> {
     /// Mouse look and clicks only count with the pointer grabbed, which a touch screen has no pointer for:
     /// grab it as a click into the window would, or act as an agent's pointer where it cannot be grabbed.
     fn touch_grab(&mut self) {
-        if !self.captured {
-            self.capture(true);
+        // Only when neither holds: a grab that fails (iOS has no pointer to grab) would otherwise be retried
+        // on every drag, and each try makes the mouse drop its next move (`grabMouse`'s ignoreFirstMove).
+        if self.captured || self.agent_pointer {
+            return;
         }
+        self.capture(true);
         if !self.captured {
             self.agent_pointer = true;
         }
@@ -172,7 +191,8 @@ impl Game<'_> {
                 Out::Look(dx, dy) => {
                     self.touch_grab();
                     let (dx, dy) = (f64::from(dx * scale), f64::from(dy * scale));
-                    self.mouse.on_move(0.0, 0.0, dx, dy, true, true);
+                    // Relative motion, as an agent's `mouse-move` adds it: no pointer position to compare with.
+                    self.mouse.add_motion(dx, dy);
                 }
                 // Pocket Edition: a tap hits the entity it is on, and uses the item or block otherwise.
                 Out::Tap => {
@@ -197,6 +217,19 @@ impl Game<'_> {
 
     // ---- menus: a finger is the mouse ----
 
+    /// The ✕ over a screen with no Done or Back of its own: an inventory, a container, creative, chat, the
+    /// statistics and advancements, a sign or a book. The title screens and the options have theirs.
+    fn touch_close_shown(&self) -> bool {
+        self.touch_shown()
+            && self.title.is_none()
+            && (self.sign_edit.is_some()
+                || self.book.is_some()
+                || !matches!(
+                    self.screen,
+                    Screen::Playing | Screen::Paused | Screen::Dead | Screen::Win | Screen::Options
+                ))
+    }
+
     fn touch_menu(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -209,35 +242,76 @@ impl Game<'_> {
                 if self.touch.menu.is_some() {
                     return;
                 }
-                self.touch.menu = Some((id, at));
-                self.touch_pointer(event_loop, at);
-                self.touch_button(event_loop, true);
+                let on_close = self.touch_close_shown()
+                    && self
+                        .touch_batch()
+                        .is_some_and(|b| touch::hit_rect(touch::close_rect(b.width, b.height), at));
+                if on_close {
+                    // What Escape does where the finger is (the pad's B).
+                    if let Err(e) = self.pad_back() {
+                        log::warn!("Horizon: touch close: {e}");
+                    }
+                } else {
+                    self.touch_pointer(event_loop, at);
+                }
+                self.touch.menu = Some(MenuFinger {
+                    id,
+                    scrolled: at,
+                    frames: 0,
+                    pressed: false,
+                    lifted: false,
+                    closed: on_close,
+                });
             }
             TouchPhase::Moved => {
-                let Some((finger, last)) = self.touch.menu else {
+                let Some(finger) = self.touch.menu.as_ref().filter(|f| f.id == id && !f.closed)
+                else {
                     return;
                 };
-                if finger != id {
-                    return;
-                }
+                let last = finger.scrolled;
                 self.touch_pointer(event_loop, at);
-                // A drag scrolls lists as a wheel would: the content follows the finger.
-                let lines = (at.1 - last.1) / SCROLL_LINE;
-                if lines.abs() >= 1.0 {
-                    self.touch_wheel(event_loop, lines.trunc());
-                    let moved = last.1 + lines.trunc() * SCROLL_LINE;
-                    self.touch.menu = Some((id, (at.0, moved)));
-                } else {
-                    self.touch.menu = Some((id, (at.0, last.1)));
+                // A drag scrolls lists as a wheel would, the content following the finger. Not in an
+                // inventory, where a drag carries the item it pressed on.
+                let lines = ((at.1 - last.1) / SCROLL_LINE).trunc();
+                let scrolls = self.screen != Screen::Inventory;
+                if let Some(f) = self.touch.menu.as_mut() {
+                    f.scrolled = (at.0, last.1 + lines * SCROLL_LINE);
+                }
+                if scrolls && lines != 0.0 {
+                    self.touch_wheel(event_loop, lines);
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                if self.touch.menu.is_some_and(|(finger, _)| finger == id) {
-                    self.touch.menu = None;
+                let Some(finger) = self.touch.menu.as_mut().filter(|f| f.id == id) else {
+                    return;
+                };
+                finger.lifted = true;
+                if !finger.closed {
                     self.touch_pointer(event_loop, at);
-                    self.touch_button(event_loop, false);
                 }
             }
+        }
+    }
+
+    /// Once a loop iteration: the menu finger's press, a frame after it went down, and its release, a frame
+    /// after the press once it has lifted.
+    fn touch_menu_frame(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(finger) = self.touch.menu.as_mut() else {
+            return;
+        };
+        finger.frames = finger.frames.saturating_add(1);
+        if finger.closed {
+            if finger.lifted {
+                self.touch.menu = None;
+            }
+        } else if !finger.pressed {
+            if finger.frames >= 2 {
+                finger.pressed = true;
+                self.touch_button(event_loop, true);
+            }
+        } else if finger.lifted {
+            self.touch.menu = None;
+            self.touch_button(event_loop, false);
         }
     }
 
@@ -319,7 +393,34 @@ impl Game<'_> {
     }
 }
 
-/// A button's mark, in 2-pixel cells centred on it.
+impl Game<'_> {
+    /// The ✕ over a screen with no way out of its own on a touch screen (`touch_close_shown`).
+    pub(super) fn draw_touch_close(&self, batch: &mut HudBatch) {
+        if !self.touch_close_shown() {
+            return;
+        }
+        let atlas = &self.gui.atlas;
+        let r = touch::close_rect(batch.width, batch.height);
+        let held = self.touch.menu.as_ref().is_some_and(|f| f.closed);
+        let face = if held {
+            rgba(200, 200, 200, 170)
+        } else {
+            rgba(150, 150, 150, 130)
+        };
+        batch.fill(atlas, r[0], r[1], r[2], r[3], rgba(40, 40, 40, 160));
+        batch.fill(atlas, r[0] + 1.0, r[1] + 1.0, r[2] - 2.0, r[3] - 2.0, face);
+        // Two diagonals of 2-pixel cells.
+        let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
+        let ink = rgba(40, 40, 40, 230);
+        for i in -3..=3 {
+            let d = i as f32 * 2.0;
+            batch.fill(atlas, cx + d - 1.0, cy + d - 1.0, 2.0, 2.0, ink);
+            batch.fill(atlas, cx - d - 1.0, cy + d - 1.0, 2.0, 2.0, ink);
+        }
+    }
+}
+
+/// A button's mark, in cells of a few pixels centred on it.
 fn glyph(
     batch: &mut HudBatch,
     atlas: &horizon_client::hud::HudAtlas,
@@ -328,8 +429,10 @@ fn glyph(
     color: u32,
 ) {
     let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
+    // The mark's pixel: two GUI pixels on the old 26-pixel buttons, growing with them.
+    let u = (r[2] / 13.0).round().max(2.0);
     let cell = |batch: &mut HudBatch, x: f32, y: f32, w: f32, h: f32| {
-        batch.fill(atlas, cx + x * 2.0, cy + y * 2.0, w * 2.0, h * 2.0, color);
+        batch.fill(atlas, cx + x * u, cy + y * u, w * u, h * u, color);
     };
     // A triangle pointing up, down, left or right: rows (or columns) narrowing to its tip.
     let arrow = |batch: &mut HudBatch, dir: (f32, f32)| {

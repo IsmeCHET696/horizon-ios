@@ -36,15 +36,20 @@ impl Control {
 /// `[x, y, width, height]` in GUI pixels.
 pub type Rect = [f32; 4];
 
-/// The D-pad's and jump's button size, and the top buttons'.
-pub const BUTTON: f32 = 26.0;
-pub const SMALL: f32 = 18.0;
+/// The D-pad's and jump's button size on a `h` GUI-pixel-high screen: about a seventh of the height, so a
+/// phone (GUI scale 4, 292 high) gets 40 GUI pixels, some 53 points, over Apple's 44-point minimum.
+pub fn button_size(h: f32) -> f32 {
+    (h * 0.14).clamp(26.0, 48.0)
+}
 /// The gap kept from the screen's edges.
 const MARGIN: f32 = 14.0;
+/// How far above the hotbar its slots still take a tap: a thumb lands high.
+const HOTBAR_REACH: f32 = 8.0;
 
 /// Where every button is on a `w` x `h` GUI-pixel screen.
 pub fn layout(w: f32, h: f32) -> Vec<(Control, Rect)> {
-    let s = BUTTON;
+    let s = button_size(h);
+    let small = (s * 0.65).round();
     // The D-pad's centre cell, high enough that its bottom row clears the screen's edge.
     let (cx, cy) = (MARGIN + s, h - MARGIN - 2.0 * s - 8.0);
     let mut v = vec![
@@ -56,20 +61,39 @@ pub fn layout(w: f32, h: f32) -> Vec<(Control, Rect)> {
         (Control::Jump, [w - MARGIN - s, cy, s, s]),
     ];
     let top = [Control::Perspective, Control::Chat, Control::Pause];
-    let x0 = (w - 3.0 * SMALL - 4.0) / 2.0;
+    let x0 = (w - 3.0 * small - 8.0) / 2.0;
     for (i, control) in top.into_iter().enumerate() {
-        v.push((control, [x0 + i as f32 * (SMALL + 2.0), 2.0, SMALL, SMALL]));
+        v.push((control, [x0 + i as f32 * (small + 4.0), 2.0, small, small]));
     }
     // Gui.extractItemHotbar's slots: the bar is 182 wide, centred, 22 high at the bottom.
     let (hx, hy) = ((w / 2.0 - 91.0).floor(), h - 22.0);
     for slot in 0..9u8 {
         v.push((
             Control::Hotbar(slot),
-            [hx + 1.0 + 20.0 * f32::from(slot), hy + 1.0, 20.0, 20.0],
+            [
+                hx + 1.0 + 20.0 * f32::from(slot),
+                hy - HOTBAR_REACH,
+                20.0,
+                22.0 + HOTBAR_REACH,
+            ],
         ));
     }
-    v.push((Control::Inventory, [hx + 184.0, hy, 22.0, 22.0]));
+    v.push((
+        Control::Inventory,
+        [hx + 184.0, hy - HOTBAR_REACH, 30.0, 22.0 + HOTBAR_REACH],
+    ));
     v
+}
+
+/// The close button over a screen that has none of its own (an inventory, chat, a sign): the top right.
+pub fn close_rect(w: f32, h: f32) -> Rect {
+    let s = (button_size(h) * 0.75).round();
+    [w - s - 4.0, 4.0, s, s]
+}
+
+/// The point is inside the rectangle.
+pub fn hit_rect(r: Rect, at: (f32, f32)) -> bool {
+    contains(r, at)
 }
 
 fn contains(r: Rect, (x, y): (f32, f32)) -> bool {
@@ -99,9 +123,9 @@ pub enum Out {
 }
 
 /// How far a finger moves (GUI pixels) before a touch is a drag and not a tap.
-const SLOP: f32 = 4.0;
+const SLOP: f32 = 8.0;
 /// How long a finger stays still (seconds) before it mines.
-const HOLD: f64 = 0.3;
+const HOLD: f64 = 0.35;
 
 #[derive(Clone, Debug)]
 enum Kind {
@@ -293,7 +317,8 @@ mod tests {
         assert_eq!(t.end(1), [Out::Tap]);
 
         t.start(2, (300.0, 100.0), 1.0, &l);
-        assert_eq!(t.frame(1.35), [Out::MineStart]);
+        assert_eq!(t.frame(1.3), []);
+        assert_eq!(t.frame(1.4), [Out::MineStart]);
         assert_eq!(t.frame(1.5), []);
         assert_eq!(t.end(2), [Out::MineEnd]);
     }
@@ -303,9 +328,9 @@ mod tests {
         let l = layout(633.0, 292.0);
         let mut t = Touches::default();
         t.start(1, (300.0, 100.0), 0.0, &l);
-        // Within the slop: no look yet, and still a tap candidate.
-        assert_eq!(t.moved(1, (302.0, 100.0), &l), []);
-        assert_eq!(t.moved(1, (310.0, 104.0), &l), [Out::Look(8.0, 4.0)]);
+        // Within the slop (a thumb's wobble): no look yet, and still a tap candidate.
+        assert_eq!(t.moved(1, (305.0, 100.0), &l), []);
+        assert_eq!(t.moved(1, (313.0, 104.0), &l), [Out::Look(8.0, 4.0)]);
         assert_eq!(t.frame(5.0), []);
         assert_eq!(t.end(1), []);
     }

@@ -5062,6 +5062,7 @@ impl Game<'_> {
         self.remote_hud(&mut batch);
         self.draw_sign_editor(&mut batch);
         self.draw_book(&mut batch);
+        self.draw_touch_close(&mut batch);
         batch
     }
     fn creative_inventory_open(&self) -> bool {
@@ -11642,7 +11643,7 @@ impl ApplicationHandler for Game<'_> {
         }
         self.poll_pads(event_loop);
         self.sync_system_keyboard();
-        self.touch_frame();
+        self.touch_frame(event_loop);
         if self.options.frames.is_some() && self.started.elapsed() > self.options.timeout {
             self.error = Some("frame-limited run timed out".into());
             event_loop.exit();

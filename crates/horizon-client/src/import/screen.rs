@@ -31,7 +31,7 @@ pub struct Status<'a> {
     pub folder: &'a Path,
     /// Where to post an archive over Wi-Fi, once the listener is up: `None` keeps the page out.
     pub address: Option<(&'a str, u16)>,
-    /// The four digits that page asks for, shown on the phone and typed on the computer.
+    /// The six digits that page asks for, shown on the phone and typed on the computer.
     pub pin: Option<&'a str>,
     /// The upload in flight, for the bar and the count.
     pub received: u64,

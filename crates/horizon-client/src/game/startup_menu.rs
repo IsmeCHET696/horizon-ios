@@ -593,6 +593,11 @@ impl Loading {
     }
 
     pub(super) fn draw_menu(&mut self, batch: &mut HudBatch) {
+        if self.importing() {
+            // The one screen a game with no files can draw, in the one font it has without them.
+            self.draw_import(batch);
+            return;
+        }
         let Some(gui) = &self.gui else { return };
         if self.menu.pending.is_some() {
             horizon_client::level_loading::draw_progress(
@@ -694,6 +699,7 @@ mod tests {
             handle: None,
             shown: false,
             menu: StartupMenu::default(),
+            import: None,
             error: None,
         }
     }

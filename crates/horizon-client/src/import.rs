@@ -12,6 +12,7 @@
 //! cannot drift apart, and [`Pack`] refuses an archive that is none of those before it writes a
 //! single file.
 
+pub mod http;
 pub mod screen;
 
 use std::{
@@ -73,7 +74,7 @@ impl Kind {
 }
 
 /// Where an import ended up, for the screen and the log to describe.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Installed {
     pub kind: Kind,
     pub path: PathBuf,
@@ -105,6 +106,13 @@ pub fn resources_root(sibling: &Path, home: Option<&Path>) -> Option<PathBuf> {
 /// screen is driven and tested on a machine with no phone in it.
 pub fn waits_on_screen() -> bool {
     cfg!(target_os = "ios") || std::env::var_os("HORIZON_IMPORT_SCREEN").is_some()
+}
+
+/// The folder an import writes into: `Documents` on a phone, where the Files app and a cable both
+/// reach, and the working directory everywhere else -- which is where a run that asked for the
+/// screen points the game.
+pub fn home() -> PathBuf {
+    std::env::current_dir().unwrap_or_default()
 }
 
 /// Names that are not part of what a person meant to send: the droppings a desktop leaves in a zip,

@@ -60,6 +60,7 @@ mod ghasts;
 mod golems;
 mod growth;
 mod hand;
+mod import_screen;
 mod initial_spawn;
 mod integrated;
 mod item_draw;
@@ -12904,6 +12905,8 @@ struct Loading {
     handle: Option<JoinHandle<()>>,
     shown: bool,
     menu: startup_menu::StartupMenu,
+    /// The wait for game files, on a device that cannot do without them: `None` loading as usual.
+    import: Option<import_screen::Import>,
     error: Option<Box<dyn std::error::Error>>,
 }
 impl Loading {
@@ -13013,7 +13016,11 @@ impl Loading {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Err(error) = self.poll_menu_resources() {
+        if let Err(error) = if self.importing() {
+            self.poll_import()
+        } else {
+            self.poll_menu_resources()
+        } {
             self.error = Some(error);
             event_loop.exit();
             return;
@@ -13195,7 +13202,15 @@ impl ApplicationHandler for App {
             Step::Ready(game) => *self = App::Ready(game),
             Step::Done => event_loop.exit(),
             Step::Failed(e) => {
+                // A phone with nothing to load has one useful move left: stay open and say what it
+                // needs, and take the files over Wi-Fi or a cable. Everywhere else the window has a
+                // terminal behind it that already said it. A phone waits whatever the loader's reason
+                // was: it cannot read a log, and the screen shows the reason either way.
                 if let App::Loading(loading) = self {
+                    if horizon_client::import::waits_on_screen() {
+                        loading.wait_for_files(e.to_string());
+                        return;
+                    }
                     loading.error = Some(e);
                 }
                 event_loop.exit();
@@ -13239,6 +13254,7 @@ fn run_loading(
         handle: Some(loader),
         shown: false,
         menu,
+        import: None,
         error: None,
     };
     let mut app = App::Loading(Box::new(loading));

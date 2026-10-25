@@ -133,6 +133,11 @@ impl Dynamic {
             if let Some(Tag::Byte(v)) = map.get(&JavaString::from("has_skylight")) {
                 d.has_skylight = *v != 0;
             }
+            // A dimension type sent in full names its clock or has none (the field is optional).
+            d.default_clock = match map.get(&JavaString::from("default_clock")) {
+                Some(Tag::String(s)) => Some(s.to_string_lossy()),
+                _ => None,
+            };
         }
         d
     }
@@ -144,6 +149,8 @@ pub struct DimensionType {
     pub min_y: i32,
     pub height: i32,
     pub has_skylight: bool,
+    /// `DimensionType.defaultClock`: the world clock whose time the level shows, if it has one.
+    pub default_clock: Option<String>,
 }
 impl DimensionType {
     pub fn vanilla(name: &str) -> Self {
@@ -152,11 +159,20 @@ impl DimensionType {
             "minecraft:the_end" => (0, 256, false),
             _ => (-64, 384, true),
         };
+        // The vanilla dimension types' clocks: the Overworld's for the Overworld (and its caves), the End's
+        // for the End, none for the Nether.
+        let default_clock = match name {
+            "minecraft:the_nether" => None,
+            "minecraft:the_end" => Some("minecraft:the_end"),
+            _ => Some("minecraft:overworld"),
+        }
+        .map(str::to_owned);
         Self {
             name: name.to_owned(),
             min_y,
             height,
             has_skylight,
+            default_clock,
         }
     }
     pub fn sections(&self) -> usize {

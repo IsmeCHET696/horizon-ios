@@ -2248,21 +2248,35 @@ impl Game<'_> {
             C::SetTime(p) => {
                 self.world.game_time = p.game_time;
                 self.remote_clock_tick();
+                // ClientLevel shows its dimension type's default clock. A name match is for a type sent
+                // without data; then the Overworld's clock, never an arbitrary one first: the End's runs day
+                // and night too but does not jump when everyone sleeps, so it kept the night going.
                 let clock = {
                     let r = self.remote.as_ref();
                     let names =
                         r.and_then(|r| r.registries.registries.get("minecraft:world_clock"));
-                    let wanted = r.map(|r| r.dimension.name.clone()).unwrap_or_default();
-                    p.clocks
-                        .iter()
-                        .find(|c| {
-                            names
-                                .and_then(|n| n.get(c.clock as usize))
-                                .is_some_and(|(n, _)| *n == wanted)
-                        })
+                    let named = |c: &&play::ClockState, wanted: &str| {
+                        names
+                            .and_then(|n| n.get(c.clock as usize))
+                            .is_some_and(|(n, _)| n == wanted)
+                    };
+                    let default = r.and_then(|r| r.dimension.default_clock.clone());
+                    let name = r.map(|r| r.dimension.name.clone()).unwrap_or_default();
+                    default
+                        .and_then(|d| p.clocks.iter().find(|c| named(c, &d)))
+                        .or_else(|| p.clocks.iter().find(|c| named(c, &name)))
+                        .or_else(|| p.clocks.iter().find(|c| named(c, "minecraft:overworld")))
                         .or_else(|| p.clocks.first())
                         .cloned()
                 };
+                if let Some(c) = &clock {
+                    log::debug!(
+                        "Horizon: world clock {} at {} (of {} sent)",
+                        c.clock,
+                        c.total_ticks,
+                        p.clocks.len()
+                    );
+                }
                 if let Some(c) = clock {
                     self.world.day_time = c.total_ticks;
                     if let Some(r) = self.remote.as_mut() {

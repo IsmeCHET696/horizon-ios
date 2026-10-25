@@ -12,6 +12,8 @@
 //! cannot drift apart, and [`Pack`] refuses an archive that is none of those before it writes a
 //! single file.
 
+pub mod screen;
+
 use std::{
     fs::{self, File},
     io::{self, Read},
@@ -95,6 +97,14 @@ pub fn resources_root(sibling: &Path, home: Option<&Path>) -> Option<PathBuf> {
     }
     home.map(|home| home.join(Kind::Resources.folder()))
         .filter(|dir| has(dir))
+}
+
+/// Whether a game that found nothing to load should wait on screen instead of giving up. On a phone,
+/// always: there is nothing else on the device to say what is missing, and a silent exit teaches a
+/// player nothing. Anywhere else it has to be asked for (`HORIZON_IMPORT_SCREEN`), which is how the
+/// screen is driven and tested on a machine with no phone in it.
+pub fn waits_on_screen() -> bool {
+    cfg!(target_os = "ios") || std::env::var_os("HORIZON_IMPORT_SCREEN").is_some()
 }
 
 /// Names that are not part of what a person meant to send: the droppings a desktop leaves in a zip,

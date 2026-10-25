@@ -257,6 +257,14 @@ impl HudAtlas {
             true,
         )
     }
+    /// The atlas for a game with no textures to read: not one pack folder walked, only the sprites
+    /// generated from nothing and the slots written at run time. The theme's embedded font lives in
+    /// `horizon/ui-text` and comes from `horizon-theme`'s own bytes, so this atlas can draw text with
+    /// no Mojang file anywhere -- which is the point: the message that the game's files are missing is
+    /// the one message that has to be drawable before there are any.
+    pub fn without_pack(root: &Path) -> Result<Self> {
+        Self::pack(root, root, &[], true)
+    }
     /// Empty slots written at run time: map textures (game/maps.rs), the
     /// minimap, downloaded skins, world and pack icons and the on-screen keyboard's text.
     fn slots(images: &mut Vec<PackedImage>, trim: (u32, u32)) {
@@ -1561,6 +1569,25 @@ mod tests {
         let width = full.font.width("abba");
         assert!(width > 0.0);
         assert_eq!(fonts.font.width("abba"), width);
+    }
+    #[test]
+    fn an_atlas_with_no_textures_holds_the_slot_text_is_drawn_into() {
+        let atlas = HudAtlas::without_pack(Path::new("/horizon-test-no-such-root")).unwrap();
+        assert_eq!(
+            atlas.sprites["horizon/ui-text"].texels((atlas.width, atlas.height)),
+            (2048, 1024)
+        );
+        // Nothing Mojang's was walked: only the synthetic slots and what generating them needs.
+        let foreign: Vec<&str> = atlas
+            .sprites
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !name.starts_with("horizon/"))
+            .collect();
+        assert!(
+            foreign.is_empty(),
+            "read from the pack after all: {foreign:?}"
+        );
     }
     #[test]
     fn obfuscated_glyphs_keep_the_width() {

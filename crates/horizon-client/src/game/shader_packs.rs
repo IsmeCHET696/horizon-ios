@@ -1,18 +1,145 @@
-//! Shader packs, for development until the Shader Packs page exists: `HORIZON_SHADER_PACK=<name>`
-//! runs `shaderpacks/<name>` (a folder or a zip beside `options.txt`) over the world. The
-//! programs of the current dimension's folder are loaded when the dimension changes (spec 1.2).
+//! Shader packs: the pack chosen in `config/iris.properties` (`enableShaders` and `shaderPack`, where
+//! Iris keeps its choice, so a Java player finds it), set by `shader-pack` from the control socket or
+//! the phone's launcher, and overridden for development by `HORIZON_SHADER_PACK=<name>`. It runs
+//! `shaderpacks/<name>` (a folder or a zip beside `options.txt`) over the world. The programs of the
+//! current dimension's folder are loaded when the dimension or the choice changes (spec 1.2).
 
+use std::cell::RefCell;
+use std::path::PathBuf;
+
+use horizon_client::Result;
 use horizon_client::camera::CameraFluid;
 use horizon_client::gfx::pack_uniforms::PackInputs;
 use horizon_shaders::{Macros, Pack, Properties, dimension_folder, load_post};
+use serde_json::{Value, json};
 
 use super::{Dim, Game};
 
+pub(super) const HELP: &[&str] = &[
+    "shader-pack [list|off|NAME]    the shader packs in shaderpacks/ and the one in use; choose one, or none",
+];
+
+thread_local! {
+    /// The pack chosen in `config/iris.properties`, read once; `None` until then.
+    static CHOSEN: RefCell<Option<Option<String>>> = const { RefCell::new(None) };
+    /// The pack whose programs the renderer holds, and for which dimension.
+    static LOADED: RefCell<Option<(String, i32)>> = const { RefCell::new(None) };
+}
+
+fn game_dir() -> PathBuf {
+    std::env::current_dir().unwrap_or_default()
+}
+
+fn settings_file() -> PathBuf {
+    game_dir().join("config").join("iris.properties")
+}
+
+/// `shaderPack` while `enableShaders` is true, in a `key=value` properties file.
+fn read_choice(text: &str) -> Option<String> {
+    let mut pack = None;
+    let mut enabled = true;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('#') || line.starts_with('!') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(['=', ':']) else {
+            continue;
+        };
+        match key.trim() {
+            "shaderPack" => pack = Some(value.trim().to_owned()).filter(|v| !v.is_empty()),
+            "enableShaders" => enabled = value.trim() == "true",
+            _ => {}
+        }
+    }
+    pack.filter(|_| enabled)
+}
+
+/// The pack to run: the environment's, else the chosen one.
+fn chosen() -> Option<String> {
+    if let Some(name) = std::env::var_os("HORIZON_SHADER_PACK") {
+        return Some(name.to_string_lossy().into_owned());
+    }
+    CHOSEN.with_borrow_mut(|chosen| {
+        chosen
+            .get_or_insert_with(|| {
+                read_choice(&std::fs::read_to_string(settings_file()).unwrap_or_default())
+            })
+            .clone()
+    })
+}
+
+/// Keep `pack` (or none) as the choice, in the file and for the next frame. Other keys stay.
+fn choose(pack: Option<&str>) -> std::io::Result<()> {
+    let file = settings_file();
+    let old = std::fs::read_to_string(&file).unwrap_or_default();
+    let mut lines: Vec<String> = old
+        .lines()
+        .filter(|line| {
+            let key = line.split_once(['=', ':']).map(|(k, _)| k.trim());
+            !matches!(key, Some("shaderPack" | "enableShaders"))
+        })
+        .map(str::to_owned)
+        .collect();
+    lines.push(format!("enableShaders={}", pack.is_some()));
+    if let Some(pack) = pack {
+        lines.push(format!("shaderPack={pack}"));
+    }
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&file, lines.join("\n") + "\n")?;
+    CHOSEN.with_borrow_mut(|chosen| *chosen = Some(pack.map(str::to_owned)));
+    Ok(())
+}
+
 impl Game<'_> {
-    /// Loads the pack for the current dimension when it changed, and returns this frame's
+    /// `shader-pack`: list the packs, or choose one (`off` for none). None for other commands.
+    pub(super) fn shader_pack_control(
+        &mut self,
+        words: &[&str],
+        line: &str,
+    ) -> Result<Option<Value>> {
+        if words.first() != Some(&"shader-pack") {
+            return Ok(None);
+        }
+        let packs = horizon_shaders::discover(&game_dir().join("shaderpacks"));
+        // The name runs to the end of the line: pack names have spaces.
+        let arg = line
+            .trim_start()
+            .strip_prefix("shader-pack")
+            .map(str::trim)
+            .unwrap_or("");
+        match arg {
+            "" | "list" => {}
+            "off" => choose(None)?,
+            name => {
+                let Some(found) = packs.iter().find(|p| p.name == name) else {
+                    return Err(format!("no shader pack {name} in shaderpacks/").into());
+                };
+                if let Some(problem) = &found.problem {
+                    return Err(format!("shader pack {name} can't be used: {problem}").into());
+                }
+                choose(Some(name))?;
+            }
+        }
+        let list: Vec<Value> = packs
+            .iter()
+            .map(|p| json!({ "name": p.name, "problem": p.problem }))
+            .collect();
+        Ok(Some(json!({ "packs": list, "selected": chosen() })))
+    }
+
+    /// Loads the chosen pack for the current dimension when either changed, and returns this frame's
     /// inputs to the pack's uniforms.
     pub(super) fn shader_pack_inputs(&mut self, camera: glam::DVec3, partial: f32) -> PackInputs {
-        let Some(name) = std::env::var_os("HORIZON_SHADER_PACK") else {
+        let Some(name) = chosen() else {
+            // A pack that was turned off leaves the renderer.
+            if LOADED.with_borrow_mut(Option::take).is_some()
+                && let Some(renderer) = &mut self.renderer
+                && let Some(dimension) = renderer.shader_pack_dimension()
+            {
+                renderer.set_shader_pack(dimension, None);
+            }
             return PackInputs::default();
         };
         let dimension = match self.dim {
@@ -20,10 +147,12 @@ impl Game<'_> {
             Dim::Nether => -1,
             Dim::End => 1,
         };
+        let current =
+            LOADED.with_borrow(|loaded| loaded.as_ref() == Some(&(name.clone(), dimension)));
         if let Some(renderer) = &mut self.renderer
-            && renderer.shader_pack_dimension() != Some(dimension)
+            && (!current || renderer.shader_pack_dimension() != Some(dimension))
         {
-            let name = name.to_string_lossy();
+            LOADED.with_borrow_mut(|loaded| *loaded = Some((name.clone(), dimension)));
             let started = std::time::Instant::now();
             let path = std::env::current_dir()
                 .unwrap_or_default()
@@ -80,5 +209,29 @@ impl Game<'_> {
             hide_gui: self.ui.hide_gui,
             brightness: self.settings.gamma,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_choice;
+
+    #[test]
+    fn the_choice_is_the_pack_while_shaders_are_on() {
+        assert_eq!(
+            read_choice("# Iris\nshaderPack=Complementary v5.zip\nenableShaders=true\n").as_deref(),
+            Some("Complementary v5.zip")
+        );
+        assert_eq!(
+            read_choice("shaderPack=BSL.zip\nenableShaders=false\n"),
+            None
+        );
+        // Iris's default is on: a file with only the pack runs it.
+        assert_eq!(
+            read_choice("shaderPack = BSL.zip").as_deref(),
+            Some("BSL.zip")
+        );
+        assert_eq!(read_choice("shaderPack=\nenableShaders=true"), None);
+        assert_eq!(read_choice(""), None);
     }
 }

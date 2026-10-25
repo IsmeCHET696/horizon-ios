@@ -182,6 +182,9 @@ impl Game<'_> {
         if let Some(value) = self.options_control(&words, line)? {
             return Ok(Some(value));
         }
+        if let Some(value) = self.shader_pack_control(&words, line)? {
+            return Ok(Some(value));
+        }
         if let Some(value) = self.lan_control(&words)? {
             return Ok(Some(value));
         }
@@ -197,6 +200,7 @@ impl Game<'_> {
             "help" => Ok(Some(json!({ "commands": HELP
                 .iter()
                 .chain(super::station_control::HELP)
+                .chain(super::shader_packs::HELP)
                 .chain(super::blockctl::HELP)
                 .chain(super::lan::HELP)
                 .chain(super::friends::HELP)

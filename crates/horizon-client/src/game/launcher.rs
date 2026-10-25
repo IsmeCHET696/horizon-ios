@@ -119,6 +119,7 @@ impl Game<'_> {
                 }
                 "import" => start_import(request),
                 "launcher-start" => request.answer(r#"{"ok":true}"#),
+                "launcher-session" => session_request(request),
                 "launcher-world" => self.launcher_world(request),
                 _ => {
                     let (reply, answers) = mpsc::channel();
@@ -206,6 +207,32 @@ fn world_files(request: horizon_ios_launcher::Request) -> Option<horizon_ios_lau
     };
     request.answer(&answer.to_string());
     None
+}
+
+/// `launcher-session {"name", "uuid", "access_token", "user_type": "msa", "xuid"}`: the Microsoft account the
+/// phone's launcher signed in (the session file's fields, docs/microsoft-account.md), kept in memory only;
+/// `launcher-session off` plays offline again. The token is never echoed back.
+fn session_request(request: horizon_ios_launcher::Request) {
+    let rest = request
+        .line
+        .trim_start()
+        .strip_prefix("launcher-session")
+        .map(str::trim)
+        .unwrap_or_default();
+    let answer = if rest == "off" {
+        horizon_client::auth::clear_current();
+        json!({ "ok": true })
+    } else {
+        match horizon_client::auth::AuthSession::parse(rest) {
+            Ok(session) => {
+                let name = session.name.clone();
+                horizon_client::auth::set_current(session);
+                json!({ "ok": true, "name": name })
+            }
+            Err(e) => json!({ "error": e }),
+        }
+    };
+    request.answer(&answer.to_string());
 }
 
 /// The control lines that are only files (worlds, servers, pings: `saves_control::file_command`), answered
@@ -296,6 +323,7 @@ impl Loading {
                     request.answer(&state.to_string());
                 }
                 "import" => start_import(request),
+                "launcher-session" => session_request(request),
                 "options-get" | "options-set" => {
                     let answer = self.launcher_options(&request.line);
                     request.answer(&answer.to_string());

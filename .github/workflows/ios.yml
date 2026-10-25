@@ -85,6 +85,19 @@ jobs:
           # The whole history: the gate below diffs the pull request's base against its head, and both commits
           # have to be in the checkout for that to work (ci.yml asks for the same thing).
           fetch-depth: 0
+      - name: Give the launcher its Microsoft sign-in app
+        # HORIZON_MSA_CLIENT_ID is the repository variable the desktop launcher's build reads too: Horizon's own
+        # approved Azure app (docs/microsoft-account.md), public, so a variable and not a secret. Unset, the
+        # launcher says sign-in isn't set up and everything else works.
+        env:
+          CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
+        run: |
+          if [ -n "$CLIENT_ID" ]; then
+            /usr/libexec/PlistBuddy -c "Set :HorizonMSAClientID $CLIENT_ID" packaging/ios/GameInfo.plist
+            echo "Microsoft sign-in: configured"
+          else
+            echo "Microsoft sign-in: no HORIZON_MSA_CLIENT_ID, the launcher will say it isn't set up"
+          fi
       - name: Does this pull request change anything Rust?
         if: github.event_name == 'pull_request'
         id: rust

@@ -36,6 +36,11 @@
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<!-- The Azure app the launcher signs Microsoft accounts in with (packaging/ios/Launcher/MicrosoftAccount.swift):
+	     Horizon's own approved one, never another launcher's. Empty here; .github/workflows/ios.yml fills it
+	     from the repository variable HORIZON_MSA_CLIENT_ID. Empty, the launcher says sign-in isn't set up. -->
+	<key>HorizonMSAClientID</key>
+	<string></string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

@@ -12,6 +12,7 @@ struct HomeView: View {
     @StateObject private var download = GameFilesDownload()
     @StateObject private var player = PlayerName()
     @StateObject private var head = SkinHead()
+    @StateObject private var account = MicrosoftAccount()
     @State private var editingName = false
     @State private var nameDraft = ""
     @State private var nameRejected = false
@@ -36,7 +37,7 @@ struct HomeView: View {
     var body: some View {
         TabView(selection: $tab) {
             page(refresh: { await link.reload() }) { PlayPage(link: link, device: device, download: download, player: player, head: head,
-                            editName: editName) }
+                            account: account, editName: editName) }
                 .tabItem { Label("Play", systemImage: "play.fill") }
                 .tag(Tab.play)
             page(refresh: { await link.reloadServers() }) { ServersPage(link: link) }
@@ -80,7 +81,9 @@ struct HomeView: View {
             Text(link.problem ?? "")
         }
         // The face follows the name: the skin of the Minecraft account that has it.
-        .task(id: player.name) { await head.load(player.name) }
+        .task(id: shownName) { await head.load(shownName) }
+        // A signed-in account goes to the game, renewed when it is close to expiring.
+        .task(id: account.profile) { await account.handOver() }
         .task {
             link.uncover = onPlay
             await link.watch()
@@ -95,11 +98,14 @@ struct HomeView: View {
         }
         .refreshable { await refresh?() }
         .safeAreaInset(edge: .top, spacing: 0) {
-            Header(name: player.name, face: head.face, editName: editName)
+            Header(name: shownName, face: head.face, editName: editName)
                 .frame(maxWidth: 520).frame(maxWidth: .infinity).background(Theme.background)
         }
         .background(Theme.background.ignoresSafeArea())
     }
+
+    /// The Microsoft account's name when one is signed in, else the offline name.
+    private var shownName: String? { account.profile?.name ?? player.name }
 
     private func editName() {
         nameDraft = player.name ?? ""
@@ -178,6 +184,7 @@ private struct PlayPage: View {
     @ObservedObject var download: GameFilesDownload
     @ObservedObject var player: PlayerName
     @ObservedObject var head: SkinHead
+    @ObservedObject var account: MicrosoftAccount
     let editName: () -> Void
 
     var body: some View {
@@ -190,6 +197,7 @@ private struct PlayPage: View {
                 ContinueCard(world: last, link: link)
             }
             WorldsSection(link: link)
+            AccountCard(account: account)
             PlayerCard(name: player.name, face: head.face, edit: editName)
         }
         .animation(.easeInOut(duration: 0.25), value: link.phase)

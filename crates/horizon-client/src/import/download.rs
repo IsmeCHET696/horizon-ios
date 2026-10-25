@@ -134,10 +134,17 @@ fn fetch(
     let mut buffer = vec![0; 1 << 16];
     let mut so_far = 0u64;
     loop {
+        // Stop at the size the server announced: on iOS a read past the end of a connection the server
+        // closed fails ("Socket is not connected", os error 57) instead of saying the body ended.
+        if size != 0 && so_far >= size {
+            break;
+        }
         let n = match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            // Everything announced arrived: the error is the connection closing, not the download.
+            Err(_) if size != 0 && so_far == size => break,
             Err(e) => {
                 let _ = fs::remove_file(&part);
                 return Err(format!("the download was cut: {e}"));
@@ -234,6 +241,33 @@ mod tests {
         // The archive is consumed, and no partial file is left.
         assert!(!home.join("horizon-download.zip").exists());
         assert!(!home.join("horizon-download.zip.part").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    /// The body, then the connection held open: the download must end at the announced size, not wait
+    /// for the server to close (or, on iOS, fail when it does).
+    #[test]
+    fn the_download_ends_at_the_announced_size() {
+        let body = prepared();
+        let size = body.len();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (done, held) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n\r\n");
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+            // Keep the socket open until the test is over.
+            let _ = held.recv_timeout(Duration::from_secs(10));
+        });
+        let home = home("held");
+        let download = Download::start(format!("http://{address}/26.3.zip"), home.clone()).unwrap();
+        let installed = wait(&download).unwrap();
+        assert_eq!(installed.kind, super::super::Kind::Resources);
+        let _ = done.send(());
         fs::remove_dir_all(home).unwrap();
     }
 

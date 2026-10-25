@@ -92,6 +92,30 @@ fn choose(pack: Option<&str>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The Shader Packs page's list and choice, read again (when it opens, and after a choice).
+pub(super) fn fill_page(options: &mut horizon_client::options_ui::OptionsUi) {
+    options.shader_packs = horizon_shaders::discover(&game_dir().join("shaderpacks"))
+        .into_iter()
+        .map(|found| (found.name, found.problem))
+        .collect();
+    options.shader_pack = chosen();
+}
+
+/// The page's choice: keep it, then show it.
+pub(super) fn pick(options: &mut horizon_client::options_ui::OptionsUi, pack: Option<&str>) {
+    if let Err(e) = choose(pack) {
+        log::warn!("Horizon: could not keep the shader pack choice: {e}");
+    }
+    fill_page(options);
+}
+
+/// The page's Open Shader Pack Folder.
+pub(super) fn open_folder() {
+    let dir = game_dir().join("shaderpacks");
+    let _ = std::fs::create_dir_all(&dir);
+    super::packs::open_folder(&dir);
+}
+
 /// `shader-pack`: list the packs, or choose one (`off` for none). None for other commands. Files only, so the
 /// phone's launcher asks it before the game starts too (game/launcher.rs).
 pub(super) fn shader_pack_command(words: &[&str], line: &str) -> Result<Option<Value>> {

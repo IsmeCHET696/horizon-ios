@@ -238,6 +238,11 @@ impl Game<'_> {
                     super::packs::open_folder(&dir);
                 }
                 Event::Credits => self.open_win_screen(false, super::win::Finish::Options),
+                Event::ShaderPacksShown => super::shader_packs::fill_page(&mut self.ui.options),
+                Event::ShaderPack(pack) => {
+                    super::shader_packs::pick(&mut self.ui.options, pack.as_deref())
+                }
+                Event::OpenShaderFolder => super::shader_packs::open_folder(),
             }
         }
         Ok(())

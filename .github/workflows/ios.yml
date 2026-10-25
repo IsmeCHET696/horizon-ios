@@ -37,6 +37,14 @@ concurrency:
 env:
   HORIZON_TELEMETRY_URL: "off"
   IOS_TARGET: aarch64-apple-ios
+  # `--release` here with the `fast` profile's codegen (Cargo.toml): the release profile's single codegen unit
+  # compiles every dependency on one core, and its LTO repeats a whole-program pass for each of the eight
+  # artifacts this job links. What these builds answer is whether the code compiles and links for a phone, which
+  # neither setting changes, and the unsigned bundles are test builds, not what players install. Every run uses the
+  # same settings, so pull requests still read main's cache.
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_INCREMENTAL: "0"
   # The crates built into the archives below, space-separated. Listing one here is a claim that it is portable, so
   # each was measured rather than hoped for, and a crate may join only after it passes this workflow's own
   # per-crate pass on a real Apple toolchain. Deliberately absent, with the reason: horizon-mods, which checks
@@ -354,7 +362,7 @@ jobs:
       # It is a `build` and not a `check`, and that is the whole reason for the step: `cargo check` stopped being
       # the question the moment the crate table said the game type-checks for iOS. A bin's link is where a phone
       # build finds out whether the frameworks a UIKit app needs are actually on the command line, and checking
-      # never links. It is `--release` because that is the profile players run, not a quicker one.
+      # never links. It is `--release` for an optimized game, with the job's quicker codegen (see `env`).
       #
       # There is no Xcode in this step on purpose. rustc emits an executable, and an .ipa is a zip of a folder
       # iOS is willing to load, so the bundle is assembled here from packaging/ios/GameInfo.plist. The alternative

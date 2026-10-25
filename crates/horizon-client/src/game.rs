@@ -10745,9 +10745,14 @@ impl ApplicationHandler for Game<'_> {
             attributes,
             winit::platform::ios::ValidOrientations::Landscape,
         );
+        // On iOS winit makes the UIWindow's frame out of the inner size, so a desktop size larger than the
+        // screen in points crops the game off the right and bottom; with none the window is the screen.
+        #[cfg(not(target_os = "ios"))]
+        let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]));
+        #[cfg(target_os = "ios")]
+        let _ = size;
         let window = match event_loop.create_window(
             attributes
-                .with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
                 .with_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None))),
         ) {
             Ok(w) => Arc::new(w),
@@ -12937,9 +12942,14 @@ impl Loading {
             attributes,
             winit::platform::ios::ValidOrientations::Landscape,
         );
+        // On iOS winit makes the UIWindow's frame out of the inner size, so a desktop size larger than the
+        // screen in points crops the game off the right and bottom; with none the window is the screen.
+        #[cfg(not(target_os = "ios"))]
+        let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]));
+        #[cfg(target_os = "ios")]
+        let _ = size;
         let window = match event_loop.create_window(
             attributes
-                .with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]))
                 .with_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None))),
         ) {
             Ok(w) => Arc::new(w),

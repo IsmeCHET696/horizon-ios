@@ -103,6 +103,11 @@ targets:
             exit 1
           }
           cd "$SRCROOT/../.."
+          # CI builds the game in its own step first and sets this, so the bundle step does not compile it twice.
+          if [ -n "${HORIZON_GAME_PREBUILT:-}" ] && [ -x "target/$IOS_TARGET/release/horizon-client" ]; then
+            echo "Horizon: using the game Cargo already built (HORIZON_GAME_PREBUILT)."
+            exit 0
+          fi
           # The profile and flags the workflow builds with, so what a player runs from Xcode is what CI measured.
           cargo build --release --locked --target "$IOS_TARGET" -p horizon-client --no-default-features
     postCompileScripts:

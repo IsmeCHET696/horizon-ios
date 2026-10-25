@@ -45,6 +45,10 @@ env:
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
   CARGO_PROFILE_RELEASE_LTO: "false"
   CARGO_INCREMENTAL: "0"
+  # The app's own minimum (project.yml), which Xcode exports to its script phases. rustc and cc read it, so a Cargo
+  # build without it is a different build to Cargo: the Xcode step's Cargo phase used to recompile the whole game
+  # for it, and the binary the .ipa carried claimed iOS 10.
+  IPHONEOS_DEPLOYMENT_TARGET: "16.0"
   # The crates built into the archives below, space-separated. Listing one here is a claim that it is portable, so
   # each was measured rather than hoped for, and a crate may join only after it passes this workflow's own
   # per-crate pass on a real Apple toolchain. Deliberately absent, with the reason: horizon-mods, which checks
@@ -497,10 +501,10 @@ jobs:
           # in it, and a second target needs a fresh read.
           ( cd packaging/ios && xcodegen generate )
           # CODE_SIGNING_ALLOWED=NO, so this proves the bundle's contents and not a signature nobody here holds.
-          # The Cargo phase inside the target is a no-op: the step above built the same profile for the same target
-          # in the same workspace, which is why this step takes seconds and not the ten minutes a cold build costs.
+          # HORIZON_GAME_PREBUILT skips the target's Cargo phase: the step above built the game, and what this step
+          # proves is the bundle around it, so it takes seconds and not the minutes a second Cargo pass costs.
           log=xcode-game-build.log
-          if ! xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
+          if ! HORIZON_GAME_PREBUILT=1 xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
               -target HorizonGame -configuration Release -sdk iphoneos -arch arm64 \
               CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
               CONFIGURATION_BUILD_DIR="$PWD/build-ios" \

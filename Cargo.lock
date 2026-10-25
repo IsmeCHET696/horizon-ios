@@ -1263,6 +1263,7 @@ dependencies = [
  "horizon-core",
  "horizon-dualsense",
  "horizon-friends",
+ "horizon-gamecontroller",
  "horizon-mods",
  "horizon-protocol",
  "horizon-server-files",
@@ -1273,9 +1274,6 @@ dependencies = [
  "log",
  "miniz_oxide 0.8.9",
  "naga",
- "objc2 0.6.5",
- "objc2-foundation 0.3.2",
- "objc2-game-controller",
  "png",
  "pollster",
  "rustix 1.1.5",
@@ -1320,6 +1318,15 @@ dependencies = [
  "sha2",
  "socket2",
  "spake2",
+]
+
+[[package]]
+name = "horizon-gamecontroller"
+version = "0.1.0"
+dependencies = [
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "objc2-game-controller",
 ]
 
 [[package]]

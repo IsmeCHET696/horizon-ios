@@ -24,13 +24,16 @@ final class DeviceStatus: ObservableObject {
             } else {
                 network = "Online"
             }
-            DispatchQueue.main.async { self?.network = network }
+            // A constant, not the weak var: a concurrent closure may not capture a var.
+            let status = self
+            DispatchQueue.main.async { status?.network = network }
         }
         monitor.start(queue: DispatchQueue(label: "dev.horizon.launcher.network"))
         let center = NotificationCenter.default
         for name in [Notification.Name.GCControllerDidConnect, .GCControllerDidDisconnect] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.readController() }
+                let status = self
+                Task { @MainActor in status?.readController() }
             })
         }
         readController()

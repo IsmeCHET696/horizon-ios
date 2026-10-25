@@ -53,7 +53,8 @@ final class GameFilesDownload: NSObject, ObservableObject {
         }
         // A prepared tree is ~600 MB: ask for the time to finish if the player looks away.
         background = UIApplication.shared.beginBackgroundTask(withName: "Horizon game files") { [weak self] in
-            Task { @MainActor in self?.endBackground() }
+            let download = self
+            Task { @MainActor in download?.endBackground() }
         }
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         self.session = session

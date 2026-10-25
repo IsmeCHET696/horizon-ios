@@ -308,12 +308,17 @@ impl Options {
             .parent()
             .ok_or("missing executable directory")?
             .join("resources");
+        // On a phone, the folder an import unpacked into `Documents` is the one a player can reach;
+        // nowhere else is it even looked at, so a desktop's answer is the one it has always given.
+        let sandbox = cfg!(target_os = "ios")
+            .then(|| std::env::current_dir().ok())
+            .flatten();
         let mut o = Self {
-            resources: if sibling.join("horizon-resources.json").exists() {
-                sibling
-            } else {
-                std::path::Path::new(".local/horizon-client").join(horizon_core::VANILLA_VERSION)
-            },
+            resources: horizon_client::import::resources_root(&sibling, sandbox.as_deref())
+                .unwrap_or_else(|| {
+                    std::path::Path::new(".local/horizon-client")
+                        .join(horizon_core::VANILLA_VERSION)
+                }),
             distance: 12,
             distance_override: None,
             seed: 0,

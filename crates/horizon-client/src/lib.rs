@@ -88,6 +88,7 @@ pub mod hud;
 pub mod hud_layout;
 pub mod hud_overlays;
 pub mod hunger;
+pub mod import;
 pub mod input;
 pub mod interaction_input;
 pub mod inv_sort;

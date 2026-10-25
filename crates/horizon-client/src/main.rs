@@ -13,11 +13,12 @@ use horizon_client::{crash, logging};
 /// inside its game home instead; a phone has no launcher, and `Documents` is the folder the Files app shows,
 /// which is where a player drops a resource pack or a world.
 ///
-/// Prepared resources are not looked for here: `Options::read` checks a `resources/` beside the executable
-/// before anything else, and on a phone that is `Horizon.app/resources/`, so assets shipped inside the bundle
-/// are found with no argument to pass and no new path to invent.
+/// Prepared resources are looked for by `Options::read`, which checks a `resources/` beside the
+/// executable first and then the `resources/` that `horizon_client::import` unpacks into this very
+/// folder -- so both the assets shipped in the bundle and the ones carried in by a player are found
+/// with no argument to pass.
 #[cfg(target_os = "ios")]
-fn into_app_sandbox() -> Result<(), String> {
+fn into_app_sandbox() -> Result<std::path::PathBuf, String> {
     let documents = std::env::var_os("HOME")
         .filter(|home| !home.is_empty())
         .map(|home| std::path::PathBuf::from(home).join("Documents"))
@@ -25,15 +26,18 @@ fn into_app_sandbox() -> Result<(), String> {
     let describe = |error: std::io::Error| format!("{}: {error}", documents.display());
     std::fs::create_dir_all(&documents).map_err(describe)?;
     std::env::set_current_dir(&documents).map_err(describe)?;
-    Ok(())
+    Ok(documents)
 }
 
 fn main() {
     #[cfg(target_os = "ios")]
-    if let Err(error) = into_app_sandbox() {
-        eprintln!("Horizon: {error}");
-        std::process::exit(1);
-    }
+    let documents = match into_app_sandbox() {
+        Ok(documents) => documents,
+        Err(error) => {
+            eprintln!("Horizon: {error}");
+            std::process::exit(1);
+        }
+    };
     horizon_client::telemetry::mark_start();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let game_args = args.iter().take_while(|a| *a != "--dedicated");
@@ -47,6 +51,20 @@ fn main() {
     if !help {
         logging::init(&home, thread);
         crash::install(home.clone(), side);
+    }
+    // What a phone does with its files before the game looks for them, once the log can say so.
+    #[cfg(target_os = "ios")]
+    if !help {
+        // A swap that a flat battery or a crash left half done is finished, or the old tree put back,
+        // before anything reads the folder it was working on.
+        match horizon_client::import::recover(&documents) {
+            Ok(Some(path)) => log::info!("Horizon: finished the import at {}", path.display()),
+            Ok(None) => {}
+            Err(error) => log::error!("Horizon: could not finish the last import: {error}"),
+        }
+        // The cable's door: an archive dragged into `Documents` is installed here, so the launch it was
+        // dragged for is the one that finds it. `scan` says what it took and what it left alone.
+        horizon_client::import::scan(&documents);
     }
     if let Err(error) = game::run() {
         log::error!("Horizon: {error}");

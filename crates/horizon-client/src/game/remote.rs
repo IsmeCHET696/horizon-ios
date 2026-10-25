@@ -2135,6 +2135,8 @@ impl Game<'_> {
                     pl.velocity = Vec3::new(p.velocity[0], p.velocity[1], p.velocity[2]);
                 }
             }
+            // handleSetEntityMotion for anything else this client flies itself between moves.
+            C::SetEntityMotion(p) => self.remote_projectile_motion(p.id, p.velocity),
             // ClientPacketListener.handleDamageEvent: LivingEntity.handleDamageEvent
             // jolts the walk animation and restarts the hurt flash. Its hurt
             // sound comes as a sound from Horizon's host, which plays it itself.

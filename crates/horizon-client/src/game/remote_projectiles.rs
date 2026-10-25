@@ -29,6 +29,27 @@ fn projectile_kind(kind: &str) -> Option<ProjectileKind> {
     })
 }
 
+/// Whether an interpolation step left a position where it was: no move from the server is under way.
+pub(super) fn same(a: Vec3, b: Vec3) -> bool {
+    a.x == b.x && a.y == b.y && a.z == b.z
+}
+
+/// A projectile's own tick on a client, between the moves a server sends only every update interval (20
+/// ticks for arrows, 10 for thrown items): `AbstractArrow.tick` and `ThrowableProjectile.tick` move it by its
+/// velocity, then slow it and pull it down. Without this it hangs in the air and jumps at each move.
+fn fly(p: &mut Projectile) {
+    let (drag, gravity) = match p.kind {
+        ProjectileKind::Arrow { .. } => (0.99, 0.05),
+        ProjectileKind::Snowball | ProjectileKind::Egg | ProjectileKind::EnderPearl => (0.99, 0.03),
+        ProjectileKind::LlamaSpit => (0.99, 0.06),
+        // Fireballs, wind charges and skulls fly straight (their power arrives with each motion).
+        _ => (1.0, 0.0),
+    };
+    let v = p.velocity;
+    p.position = Vec3::new(p.position.x + v.x, p.position.y + v.y, p.position.z + v.z);
+    p.velocity = Vec3::new(v.x * drag, v.y * drag - gravity, v.z * drag);
+}
+
 impl Game<'_> {
     /// `handleAddEntity` for these types; false when `kind` isn't one.
     pub(super) fn spawn_remote_projectile(
@@ -146,6 +167,13 @@ impl Game<'_> {
                     (9, Value::Bool(show)) => c.show_bottom = *show,
                     _ => {}
                 }
+            } else if let Some(t) = self.tridents.iter_mut().find(|t| t.id == id) {
+                // AbstractArrow.ID_FLAGS (no physics: a loyal trident on its way back) and IN_GROUND.
+                match (index, value) {
+                    (8, Value::Byte(flags)) => t.no_physics = flags & 2 != 0,
+                    (10, Value::Bool(in_ground)) => t.in_ground = *in_ground,
+                    _ => {}
+                }
             } else if let Some(p) = self.creatures.projectiles.iter_mut().find(|p| p.id == id) {
                 match (&mut p.kind, index, value) {
                     // AbstractArrow.ID_FLAGS (critical) and IN_GROUND.
@@ -162,6 +190,16 @@ impl Game<'_> {
                     _ => {}
                 }
             }
+        }
+    }
+
+    /// `handleSetEntityMotion` for a projectile or trident: the velocity its own ticks fly with.
+    pub(super) fn remote_projectile_motion(&mut self, id: i32, velocity: [f64; 3]) {
+        let (id, velocity) = (id as u32, Vec3::new(velocity[0], velocity[1], velocity[2]));
+        if let Some(p) = self.creatures.projectiles.iter_mut().find(|p| p.id == id) {
+            p.velocity = velocity;
+        } else if let Some(t) = self.tridents.iter_mut().find(|t| t.id == id) {
+            t.velocity = velocity;
         }
     }
 
@@ -193,7 +231,12 @@ impl Game<'_> {
         for p in &mut self.creatures.projectiles {
             p.previous = p.position;
             p.age += 1;
-            p.position = step(p.id, p.position);
+            let lerped = step(p.id, p.position);
+            if same(lerped, p.position) && !p.stuck {
+                fly(p);
+            } else {
+                p.position = lerped;
+            }
         }
         for t in &mut self.tridents {
             let id = t.id;

@@ -51,10 +51,24 @@ impl ThrownTrident {
             creative_only: false,
         }
     }
-    /// One tick of a server's client: the previous position, then `step`.
+    /// One tick of a server's client: the previous position, then `step` (a move from the server), or, with
+    /// none under way, the trident's own flight (`AbstractArrow.tick`: drag 0.99, gravity 0.05, none while it
+    /// returns), as the server sends its moves only every 20 ticks.
     pub(super) fn remote_step(&mut self, step: impl FnOnce(Vec3) -> Vec3) {
         self.previous = self.position;
-        self.position = step(self.position);
+        let lerped = step(self.position);
+        if !super::remote_projectiles::same(lerped, self.position) || self.in_ground {
+            self.position = lerped;
+            return;
+        }
+        let v = self.velocity;
+        let gravity = if self.no_physics { 0.0 } else { 0.05 };
+        self.position = Vec3::new(
+            self.position.x + v.x,
+            self.position.y + v.y,
+            self.position.z + v.z,
+        );
+        self.velocity = Vec3::new(v.x * 0.99, v.y * 0.99 - gravity, v.z * 0.99);
     }
 }
 const HALF: f64 = 0.25;

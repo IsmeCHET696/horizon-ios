@@ -9,6 +9,7 @@ import UIKit
 @_cdecl("horizon_launcher_present")
 public func horizonLauncherPresent(_ submit: HorizonSubmit?) -> Bool {
     Bridge.submit = submit
+    GameAudio.start()
     Theme.registerFonts()
     DispatchQueue.main.async { present(attempts: 20) }
     return true

@@ -53,7 +53,7 @@ between this bundle and a playable one:
 | Assets | `horizon-prepare` runs a JDK against the player's own Minecraft install to produce `.local/horizon-client/26.3`; there is no Java on iOS | Prepare off-device, download to the phone |
 | Mods | `horizon-mods` runs them through wasmtime's cranelift JIT, and Apple forbids generating executable code at runtime (`docs/mods.md`) -- note the runner says the `mods` *feature compiles*, which is about the compiler and not about running | Disabled on iOS |
 | Input | the client's winit loop is desktop-shaped: cursor-warp mouse look, no touch | A touch layer, in no crate yet |
-| Sound, controllers | `cpal`'s CoreAudio backend is macOS's and `hidapi`/`gilrs` need libudev or IOKit, which is what `--no-default-features` drops and why the phone build asks for that flag | `AVAudioEngine` and `GCController`, neither written yet |
+| Sound, controllers | `hidapi`/`gilrs` need libudev or IOKit, which is what `--no-default-features` drops and why the phone build asks for that flag; `cpal` (the `audio` feature) has a CoreAudio backend for iOS too, through RemoteIO | `--features audio` on the phone, with the launcher setting up the audio session; `GCController` for pads |
 
 So this app runs the half that was already portable before the client was: `horizon-core`'s Java-accurate RNG
 and HotSpot-exact `Math`, its paletted block storage, and `horizon-world`'s NBT codec -- the four probes whose
@@ -65,7 +65,7 @@ answers you can read on the screen, all of them computed on the phone rather tha
 is the shell above. `Horizon-game-unsigned.ipa` is `horizon-client` itself:
 
 ```sh
-cargo build --release --locked --target aarch64-apple-ios -p horizon-client --no-default-features
+cargo build --release --locked --target aarch64-apple-ios -p horizon-client --no-default-features --features audio
 rm -rf game-payload && mkdir -p game-payload/Payload/Horizon.app
 cp target/aarch64-apple-ios/release/horizon-client game-payload/Payload/Horizon.app/Horizon
 cp GameInfo.plist game-payload/Payload/Horizon.app/Info.plist
@@ -101,7 +101,7 @@ cd packaging/ios && xcodegen generate && open HorizonIOS.xcodeproj
 ```
 
 Pick **Horizon game**, choose your device, set a signing team on the target, and press Run. The target's first
-build phase runs `cargo build --release --target aarch64-apple-ios -p horizon-client --no-default-features`;
+build phase runs `cargo build --release --target aarch64-apple-ios -p horizon-client --no-default-features --features audio`;
 Xcode then links a placeholder `GameShell/main.m` so the bundle has an executable, and a phase after it
 overwrites that file with Cargo's binary -- which is what the signature then covers. rustc cannot emit a library
 from a bin target and `Game` is bin-only code, so this is the only shape that gets the game into a signed bundle

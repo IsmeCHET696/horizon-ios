@@ -253,7 +253,7 @@ jobs:
           # horizon-mods runs them through a JIT, and Apple forbids one outside a browser engine, so the
           # feature stays off in the app whatever this row says (packaging/ios/README.md). It is here because
           # the compiler was never the obstacle for mods, and measuring that is this workflow's job.
-          for spec in "no-defaults:--no-default-features" "with-mods:--no-default-features --features mods"; do
+          for spec in "no-defaults:--no-default-features" "with-audio:--no-default-features --features audio" "with-mods:--no-default-features --features mods"; do
             name=${spec%%:*}
             features=${spec#*:}
             log="ios-attempt-horizon-client-$name.log"
@@ -393,15 +393,15 @@ jobs:
             echo '|---|---|---|---|---|---|---|'
           } >> "$GITHUB_STEP_SUMMARY"
           log=ios-game-build.log
-          # Dropping the defaults is the only shape a phone can be given, and it is the shape the table above
-          # measured: no cpal output for a sound system iOS does not expose, no gilrs or hidapi for a controller
-          # stack that wants libudev. See packaging/ios/README.md for what plays sound and what reads a pad.
+          # The defaults minus `controllers` (gilrs and hidapi want libudev; GameController reads pads), with
+          # `audio`: cpal's CoreAudio backend plays through RemoteIO on a phone. The same flags as project.yml's
+          # Cargo phase, so the bundle's executable is the one measured here. See packaging/ios/README.md.
           if cargo build --release --locked --target "$IOS_TARGET" -p horizon-client \
-              --no-default-features > "$log" 2>&1; then
+              --no-default-features --features audio > "$log" 2>&1; then
             bin="target/$IOS_TARGET/release/horizon-client"
             if [ ! -x "$bin" ]; then
               echo "::error::cargo said the game built and left no executable at $bin"
-              echo '| `horizon-client --no-default-features` | no | &mdash; | &mdash; | &mdash; | no executable | &mdash; |' \
+              echo '| `horizon-client --no-default-features --features audio` | no | &mdash; | &mdash; | &mdash; | no executable | &mdash; |' \
                 >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi

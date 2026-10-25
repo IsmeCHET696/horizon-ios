@@ -308,7 +308,12 @@ impl Game<'_> {
                 if running {
                     self.tick_weather_effects();
                 }
-                self.tick_world(running)
+                let ticked = self.tick_world(running);
+                // The first pass sends its level's effects from `tick_lan`; this level's level
+                // events, block and entity events and hurt animations are its own (`swap_level`),
+                // so they go out now or never (a door, a jukebox, a mob hurt in the Nether).
+                self.flush_level_effects();
+                ticked
             };
             if result.is_err() {
                 break;

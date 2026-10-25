@@ -1135,6 +1135,14 @@ impl Game<'_> {
         }
     }
     /// Send the tick's level events, sounds and mob animations.
+    /// `lan_flush_effects` for a level other than the first of a server tick (game/levels.rs).
+    pub(super) fn flush_level_effects(&mut self) {
+        if let Some(mut host) = self.lan.take() {
+            self.lan_flush_effects(&mut host);
+            self.lan = Some(host);
+        }
+    }
+
     fn lan_flush_effects(&mut self, host: &mut LanHost) {
         let songs = std::mem::take(&mut self.lan_songs);
         for (kind, pos, data, acting) in std::mem::take(&mut self.lan_events) {

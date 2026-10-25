@@ -168,11 +168,14 @@ fn mob_meta(
         meta.push((9, serializer::FLOAT, Value::Float(health)));
     }
     defaults.push((9, serializer::FLOAT, Value::Float(1.0)));
-    // Mob.DATA_MOB_FLAGS_ID: no AI 1, left-handed 2.
-    let flags = i8::from(m.no_ai) | i8::from(m.extra.left_handed) << 1;
+    // Mob.DATA_MOB_FLAGS_ID: no AI 1, left-handed 2, aggressive 4 (a skeleton draws its bow,
+    // a zombie raises its arms).
+    let flags =
+        i8::from(m.no_ai) | i8::from(m.extra.left_handed) << 1 | i8::from(m.ai.aggressive) << 2;
     if flags != 0 {
         meta.push((15, serializer::BYTE, Value::Byte(flags)));
     }
+    defaults.push((15, serializer::BYTE, Value::Byte(0)));
     // AgeableMob.DATA_BABY_ID (and Zombie's, Piglin's).
     if let Some(index) = baby_index(kind) {
         if m.is_baby() {

@@ -1943,12 +1943,17 @@ impl Game<'_> {
                         }
                     }
                 }
-                if let Some(m) = self.mobs.iter_mut().find(|m| m.id == p.id as u32)
-                    && m.species() == horizon_client::mobs::Species::Rabbit
-                {
+                // Mob.DATA_MOB_FLAGS_ID: left-handed 2 and aggressive 4 for every mob (the
+                // skeleton's drawn bow, the zombie's raised arms); no AI 1 for rabbits, whose
+                // hops this client plays itself.
+                if let Some(m) = self.mobs.iter_mut().find(|m| m.id == p.id as u32) {
                     for (index, _, value) in &p.values {
                         if let (15, Value::Byte(flags)) = (index, value) {
-                            m.no_ai = flags & 1 != 0;
+                            m.extra.left_handed = flags & 2 != 0;
+                            m.ai.aggressive = flags & 4 != 0;
+                            if m.species() == horizon_client::mobs::Species::Rabbit {
+                                m.no_ai = flags & 1 != 0;
+                            }
                         }
                     }
                 }

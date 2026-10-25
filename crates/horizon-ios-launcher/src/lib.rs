@@ -13,6 +13,12 @@ pub fn present() -> bool {
     if SHOWN.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
+    show()
+}
+
+/// Show the launcher over the game again (Quit Game, which an iPhone app does not do itself). False when this
+/// build or bundle has none; the launcher ignores a second request while it is up.
+pub fn show() -> bool {
     #[cfg(target_os = "ios")]
     return ios::present();
     #[cfg(not(target_os = "ios"))]

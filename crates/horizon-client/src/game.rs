@@ -11106,7 +11106,12 @@ impl ApplicationHandler for Game<'_> {
                         self.audio.play_button_click();
                     }
                     match action {
-                        Action::Quit => event_loop.exit(),
+                        // iPhone and iPad: an app does not quit itself; Quit Game goes back to the launcher.
+                        Action::Quit => {
+                            if !horizon_ios_launcher::show() {
+                                event_loop.exit();
+                            }
+                        }
                         Action::Options => self.open_options(true),
                         Action::Accessibility => self
                             .open_options_at(true, horizon_client::options_ui::Page::Accessibility),

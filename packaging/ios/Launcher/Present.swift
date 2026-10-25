@@ -2,9 +2,9 @@ import SwiftUI
 import UIKit
 
 /// The C entry point `horizon-ios-launcher` looks up: show the launcher over the game, which keeps running
-/// under it at its title screen. Play dismisses it. Called on the main thread once the game's window exists;
-/// the presenting waits a turn of the run loop, because that window's view controller may not be on screen
-/// yet when its first frame is being set up.
+/// under it at its title screen. Play dismisses it; the game's Quit Game asks for it again. Called on the main
+/// thread; the presenting waits a turn of the run loop, because at startup the game's view controller may not
+/// be on screen yet while its first frame is being set up.
 @_cdecl("horizon_launcher_present")
 public func horizonLauncherPresent() -> Bool {
     Theme.registerFonts()
@@ -20,14 +20,40 @@ private func present(attempts: Int) {
         }
         return
     }
+    // Already up: a second request (Quit Game pressed twice) changes nothing.
+    if root is LauncherHostingController {
+        return
+    }
     let host = LauncherHostingController(rootView: AnyView(EmptyView()))
     host.rootView = AnyView(
-        HomeView(onPlay: { [weak host] in host?.dismiss(animated: true) })
-            .preferredColorScheme(.dark)
+        HomeView(onPlay: { [weak host] in
+            guard let host else { return }
+            let scene = host.view.window?.windowScene
+            host.dismiss(animated: true) {
+                // Back to the game's landscape (its own view controller allows nothing else).
+                turn(scene, to: .landscape)
+            }
+        })
+        .preferredColorScheme(.dark)
     )
     host.modalPresentationStyle = .fullScreen
     host.modalTransitionStyle = .crossDissolve
-    root.present(host, animated: false)
+    root.present(host, animated: false) {
+        turn(host.view.window?.windowScene, to: .portrait)
+    }
+}
+
+/// Ask the scene to turn to `orientations` now, rather than when the phone is next moved.
+private func turn(_ scene: UIWindowScene?, to orientations: UIInterfaceOrientationMask) {
+    guard let scene else { return }
+    for window in scene.windows {
+        var top = window.rootViewController
+        while let next = top?.presentedViewController {
+            top = next
+        }
+        top?.setNeedsUpdateOfSupportedInterfaceOrientations()
+    }
+    scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { _ in }
 }
 
 /// The view controller of winit's window: the one the launcher is presented from.
@@ -43,9 +69,10 @@ private func gameViewController() -> UIViewController? {
     return top
 }
 
-/// The game is held sideways (GameInfo.plist), and so is its launcher: a presented controller that allowed
-/// portrait would turn the phone's picture upright over a landscape game.
+/// The launcher stands upright, as the design does; the game under it is held sideways by its own view
+/// controller, which the phone turns back to when Play dismisses this one. GameInfo.plist allows both.
 private final class LauncherHostingController: UIHostingController<AnyView> {
-    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .portrait }
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { .portrait }
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 }

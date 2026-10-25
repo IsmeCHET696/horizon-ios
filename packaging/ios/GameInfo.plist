@@ -64,10 +64,13 @@
 	</array>
 	<key>UIRequiresFullScreen</key>
 	<true/>
+	<!-- Portrait is for the launcher (packaging/ios/Launcher), which stands upright over the game; the game's
+	     own view controller (winit, ValidOrientations::Landscape) keeps the game sideways. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 </dict>
 </plist>

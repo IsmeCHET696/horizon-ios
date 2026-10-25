@@ -24,7 +24,8 @@ name: ios
 # Compiling for a phone and running on one are separate problems, and the tables below say which is which.
 on:
   push:
-    branches: [main]
+  # Every branch of this fork: each push builds the iPhone app.
+    branches: ['**']
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:

@@ -8,7 +8,8 @@ name: checks
 # never start this workflow. See docs/release-flow.md.
 on:
   push:
-    branches: [main]
+  # Every branch of this fork: a push is checked before it is merged anywhere.
+    branches: ['**']
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:

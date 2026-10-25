@@ -253,6 +253,9 @@ use winit::{
 #[derive(Clone)]
 struct Options {
     resources: PathBuf,
+    /// `--resources` was given: the game files are where someone said, and a run without them fails
+    /// rather than downloading any (game/import_screen.rs).
+    resources_given: bool,
     distance: i32,
     distance_override: Option<i32>,
     seed: i64,
@@ -320,11 +323,16 @@ impl Options {
             .parent()
             .ok_or("missing executable directory")?
             .join("resources");
-        // On a phone, the folder an import unpacked into `Documents` is the one a player can reach;
-        // nowhere else is it even looked at, so a desktop's answer is the one it has always given.
-        let sandbox = cfg!(target_os = "ios")
-            .then(|| std::env::current_dir().ok())
-            .flatten();
+        // On a phone, the folder an import unpacked into `Documents` is the one a player can reach. On
+        // Linux, the game files a start downloaded live in the game's home (`import::home`). A desktop
+        // without them gives the answer it has always given.
+        let sandbox = if cfg!(target_os = "ios") {
+            std::env::current_dir().ok()
+        } else if cfg!(target_os = "linux") {
+            Some(horizon_client::import::home())
+        } else {
+            None
+        };
         let mut o = Self {
             resources: horizon_client::import::resources_root(&sibling, sandbox.as_deref())
                 .unwrap_or_else(|| {
@@ -349,6 +357,7 @@ impl Options {
             no_pause: false,
             control: None,
             offscreen: false,
+            resources_given: false,
             window_size: [1280, 720],
             spikes: std::env::var("HORIZON_SPIKES")
                 .ok()
@@ -396,7 +405,10 @@ impl Options {
                         .next()
                         .ok_or_else(|| format!("missing value after {arg}"))?;
                     match arg.as_str() {
-                        "--resources" => o.resources = value.into(),
+                        "--resources" => {
+                            o.resources = value.into();
+                            o.resources_given = true;
+                        }
                         "--render-distance" | "--radius" => {
                             o.distance = value.parse()?;
                             o.distance_override = Some(o.distance);
@@ -13345,7 +13357,7 @@ impl ApplicationHandler for App {
                 // terminal behind it that already said it. A phone waits whatever the loader's reason
                 // was: it cannot read a log, and the screen shows the reason either way.
                 if let App::Loading(loading) = self {
-                    if horizon_client::import::waits_on_screen() {
+                    if horizon_client::import::waits_on_screen() || loading.downloads_game_files() {
                         loading.wait_for_files(e.to_string());
                         return;
                     }

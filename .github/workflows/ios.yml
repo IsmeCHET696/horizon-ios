@@ -1,4 +1,5 @@
 name: ios
+# Beside it, a `linux` job builds the Linux game from the same push (its own runner, below).
 # Three things, in this order: how much of Horizon compiles for iPhone and iPad, measured on every pull request and
 # every push to main; an unsigned .ipa for the app shell that links the crates which already do; and an unsigned .ipa
 # carrying the game itself, cross-compiled and bundled with no Xcode in the way. Both files are then posted to
@@ -66,6 +67,39 @@ env:
   PORTABLE: horizon-core horizon-world horizon-threads horizon-assets horizon-protocol horizon-theme
 
 jobs:
+  # The Linux game from the same push, beside the phone's: the release build with sound and controllers, which
+  # downloads its game files on its first start (crates/horizon-client/src/import/download.rs). Its own runner,
+  # so it costs no macOS minutes and runs while the phone builds.
+  linux:
+    name: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install the ALSA and udev headers the client links against
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-release
+      - name: Build the game for Linux
+        run: cargo build --release --locked -p horizon-client --bin horizon-client --bin horizon-ctl
+      - name: Pack it
+        run: |
+          set -euo pipefail
+          mkdir -p dist-linux
+          cp target/release/horizon-client target/release/horizon-ctl dist-linux/
+          file dist-linux/horizon-client
+          tar -C dist-linux -czf horizon-linux-x86_64.tar.gz horizon-client horizon-ctl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: horizon-linux-x86_64
+          path: horizon-linux-x86_64.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
   portability:
     # vars.MAC_RUNNER lets the maintainer point this at his own Mac, as release.yml does; a hosted Mac answers
     # for everyone else. aarch64-apple-ios needs no Xcode project: rustc cross-compiles, and the steps below

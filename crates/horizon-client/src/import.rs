@@ -110,9 +110,13 @@ pub fn waits_on_screen() -> bool {
 }
 
 /// The folder an import writes into: `Documents` on a phone, where the Files app and a cable both
-/// reach, and the working directory everywhere else -- which is where a run that asked for the
-/// screen points the game.
+/// reach; on Linux the game's home (`HORIZON_HOME`, else `~/.local/share/horizon`), where a start
+/// downloads the game files once and finds them after; and the working directory everywhere else, and
+/// in a run that asked for the screen (`HORIZON_IMPORT_SCREEN`), which points the game there.
 pub fn home() -> PathBuf {
+    if cfg!(target_os = "linux") && std::env::var_os("HORIZON_IMPORT_SCREEN").is_none() {
+        return crate::logging::game_home();
+    }
     std::env::current_dir().unwrap_or_default()
 }
 

@@ -31,6 +31,9 @@ pub(super) struct Import {
     download: Option<horizon_client::import::download::Download>,
 }
 
+/// Whether this run has downloaded the game files already.
+static DOWNLOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 impl Loading {
     /// Stop waiting for a game that cannot start and wait for files instead. The caller has already
     /// said on screen that this is what a phone does (`import::waits_on_screen`).
@@ -47,9 +50,15 @@ impl Loading {
             }
         };
         horizon_client::ui_theme::reset_atlas();
-        // Download them first; the Wi-Fi and cable doors open only if that fails.
+        // Download them first; the Wi-Fi and cable doors open only if that fails. Once a run: files that
+        // downloaded and still don't load would otherwise be downloaded again and again.
         let url = horizon_client::import::download::url(horizon_core::VANILLA_VERSION);
-        let download =
+        let download = if DOWNLOADED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            log::warn!(
+                "Horizon: the downloaded game files did not load ({reason}); not downloading again"
+            );
+            None
+        } else {
             match horizon_client::import::download::Download::start(url.clone(), home.clone()) {
                 Ok(download) => {
                     log::info!("Horizon: no game files ({reason}); downloading {url}");
@@ -59,7 +68,8 @@ impl Loading {
                     log::warn!("Horizon: could not start downloading the game files: {error}");
                     None
                 }
-            };
+            }
+        };
         let session = if download.is_some() {
             None
         } else {
@@ -79,6 +89,17 @@ impl Loading {
             total: 0,
             download,
         });
+    }
+
+    /// Whether a Linux game with nothing to load downloads its files instead of exiting: when nobody
+    /// named a `--resources` folder and this is a player's run, not a test's (offscreen or counted
+    /// frames), which must fail fast rather than fetch hundreds of megabytes.
+    pub(super) fn downloads_game_files(&self) -> bool {
+        cfg!(target_os = "linux")
+            && self
+                .options
+                .as_ref()
+                .is_some_and(|o| !o.resources_given && !o.offscreen && o.frames.is_none())
     }
 
     /// Whether this window is waiting for files, which is when the loader must be left alone: its

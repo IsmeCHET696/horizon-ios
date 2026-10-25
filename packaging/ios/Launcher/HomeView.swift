@@ -5,6 +5,10 @@ struct HomeView: View {
     /// Play: uncover the game (Present.swift).
     var onPlay: () -> Void
     @State private var inviteCode = ""
+    @StateObject private var player = PlayerName()
+    @State private var editingName = false
+    @State private var nameDraft = ""
+    @State private var nameRejected = false
 
     // Spelled out: a private property makes the memberwise one private, and Present.swift builds this view.
     init(onPlay: @escaping () -> Void = {}) {
@@ -22,7 +26,7 @@ struct HomeView: View {
                     .padding(.top, 8)
                 JoinFriend(code: $inviteCode)
                     .padding(.top, 8)
-                Footer()
+                Footer(name: player.name)
                     .padding(.top, 8)
             }
             .padding(.horizontal, 24)
@@ -33,7 +37,30 @@ struct HomeView: View {
             .frame(maxWidth: 460)
             .frame(maxWidth: .infinity)
         }
-        .safeAreaInset(edge: .top, spacing: 0) { Header().frame(maxWidth: 460).frame(maxWidth: .infinity).background(Theme.background) }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Header(name: player.name) {
+                nameDraft = player.name ?? ""
+                editingName = true
+            }
+            .frame(maxWidth: 460).frame(maxWidth: .infinity).background(Theme.background)
+        }
+        // The account button: the offline name the game plays with.
+        .alert("Player name", isPresented: $editingName) {
+            TextField("Name", text: $nameDraft)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Save") {
+                nameRejected = !player.save(nameDraft.trimmingCharacters(in: .whitespaces))
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your name in single player and on servers that don't check accounts. Up to 16 characters, no spaces.")
+        }
+        .alert("That name can't be used", isPresented: $nameRejected) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Use 1 to 16 letters, digits or symbols, with no spaces.")
+        }
         .background(Theme.background.ignoresSafeArea())
     }
 }
@@ -41,6 +68,9 @@ struct HomeView: View {
 // MARK: - Header
 
 private struct Header: View {
+    let name: String?
+    let editName: () -> Void
+
     var body: some View {
         HStack {
             HStack(spacing: 10) {
@@ -51,8 +81,8 @@ private struct Header: View {
             }
             Spacer()
             HStack(spacing: 8) {
-                Button {} label: {
-                    Text("h")
+                Button(action: editName) {
+                    Text(name.map { String($0.prefix(1)).lowercased() } ?? "?")
                         .font(Theme.pixel(21, .medium))
                         .foregroundStyle(Theme.text)
                         .frame(width: 40, height: 40)
@@ -66,7 +96,7 @@ private struct Header: View {
                                 .offset(x: 28, y: 28)
                         }
                 }
-                .accessibilityLabel("Account, offline")
+                .accessibilityLabel("Player name: \(name ?? "not set"), offline")
                 IconButton(image: "sliders-horizontal", label: "Settings") {}
             }
         }
@@ -398,6 +428,8 @@ private struct JoinFriend: View {
 }
 
 private struct Footer: View {
+    let name: String?
+
     var body: some View {
         HStack {
             HStack(spacing: 16) {
@@ -406,7 +438,7 @@ private struct Footer: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 5) {
-                Text("heyskylo · Offline").font(Theme.sans(10)).foregroundStyle(Theme.textMuted)
+                Text("\(name ?? "No name yet") · Offline").font(Theme.sans(10)).foregroundStyle(Theme.textMuted)
                 Text("LAUNCHER 0.2.5").font(Theme.mono(8)).foregroundStyle(Theme.textFaint)
             }
         }

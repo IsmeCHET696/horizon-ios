@@ -46,6 +46,10 @@
 	<string>Horizon is MIT licensed. Not an official Minecraft product; not approved by or associated with Mojang or Microsoft.</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- With UIFileSharingEnabled, this is what lists Documents under "On My iPhone" in the Files app:
+	     sharing alone reaches it only from a computer (Finder, iTunes). -->
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIDeviceFamily</key>

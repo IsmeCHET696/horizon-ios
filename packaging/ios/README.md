@@ -176,7 +176,8 @@ curl --upload-file Horizon-26.3.zip "http://<address>:<port>/upload?name=Horizon
 `Documents/resources` whatever it says.
 
 The listener is up only while that screen is up, it takes one archive at a time, and the digits -- never in the
-page it serves -- are what stops anyone else on the network from writing into the app. When the archive lands,
+page it serves -- are what stops anyone else on the network from writing into the app: after thirty wrong codes
+the session answers nobody, right code included, and only a relaunch asks with new ones. When the archive lands,
 the port is closed, the game files are in `Documents/resources`, and the loader starts again on them. A wrong
 code answers `403` and writes nothing. If what arrived still is not enough to start the game, the screen comes
 back with the new reason and asks again on a new port with new digits, so a bad archive is one more send away

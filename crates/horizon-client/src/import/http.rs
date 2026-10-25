@@ -15,7 +15,7 @@ use std::{
     fs,
     io::{self, Read, Write},
     net::{TcpListener, TcpStream},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -56,14 +56,44 @@ pub struct Session {
     port: u16,
     pin: String,
     news: mpsc::Receiver<News>,
-    stop: Arc<AtomicBool>,
-    busy: Arc<AtomicBool>,
+    line: Arc<Line>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
-/// How long the accept loop sleeps when nothing is arriving. It is woken by a timer rather than by a
-/// connection from its own process, because a loop that only ends when something knocks could be left
-/// holding the port -- and a phone that has started loading its game must not keep a door open.
+/// What the listener and every socket it answered work from: one archive at a time, in one folder,
+/// under one code, and with a count of how often that code has been guessed at.
+struct Line {
+    /// Where an archive has to arrive: `Documents` on a phone.
+    home: PathBuf,
+    /// The six digits this session shows.
+    pin: String,
+    /// Set when the game stops waiting; the accept loop and every body in flight end on it.
+    stop: AtomicBool,
+    /// Set while an archive is arriving.
+    busy: AtomicBool,
+    /// Uploads that got the code wrong, which is what runs out, not the port.
+    guesses: AtomicUsize,
+    /// The sockets answered and thrown away past `MAX_CLIENTS`, counted so a flood cannot make one
+    /// thread per socket; counted by the accept loop, before the thread exists.
+    clients: AtomicUsize,
+    sender: mpsc::Sender<News>,
+}
+
+impl Line {
+    /// Whether this session has been knocked at enough to stop answering anybody, right code or not.
+    /// The screen's own words are the cable and a relaunch, and a relaunch asks with new digits.
+    fn guessed_out(&self) -> bool {
+        self.guesses.load(Ordering::Relaxed) >= MAX_GUESSES
+    }
+}
+
+/// How many wrong codes one session will look at. Six digits is a number a stranger can spend an
+/// evening on, and the port is open for as long as the screen is, which is minutes.
+const MAX_GUESSES: usize = 30;
+
+/// How long the accept loop sleeps when nothing is arriving. It ends on a timer rather than on a
+/// connection from its own process, because a loop that only wakes when something knocks could be
+/// left holding the port -- and a phone that has started loading its game must not keep a door open.
 const POLL: Duration = Duration::from_millis(20);
 
 impl Session {
@@ -72,21 +102,25 @@ impl Session {
         let listener = TcpListener::bind(("0.0.0.0", 0))?;
         let port = listener.local_addr()?.port();
         listener.set_nonblocking(true)?;
-        let pin = random_pin()?;
         let (sender, news) = mpsc::channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        let busy = Arc::new(AtomicBool::new(false));
-        let (loop_home, loop_pin) = (home.to_owned(), pin.clone());
-        let (loop_stop, loop_busy, loop_sender) = (stop.clone(), busy.clone(), sender.clone());
-        let clients = Arc::new(AtomicUsize::new(0));
-        let loop_clients = clients.clone();
+        let pin = random_pin()?;
+        let line = Arc::new(Line {
+            home: home.to_owned(),
+            pin: pin.clone(),
+            stop: AtomicBool::new(false),
+            busy: AtomicBool::new(false),
+            guesses: AtomicUsize::new(0),
+            clients: AtomicUsize::new(0),
+            sender,
+        });
+        let loop_line = line.clone();
         let thread = thread::Builder::new()
             .name("horizon-import".into())
             .spawn(move || {
                 // One thread per connection, because a browser that keeps the socket it used for
                 // the page open must not also sit in front of the upload that page sends.
                 loop {
-                    if loop_stop.load(Ordering::Relaxed) {
+                    if loop_line.stop.load(Ordering::Relaxed) {
                         return;
                     }
                     let stream = match listener.accept() {
@@ -99,29 +133,21 @@ impl Session {
                         }
                         Err(_) => continue,
                     };
-                    if loop_clients.load(Ordering::Relaxed) >= MAX_CLIENTS {
+                    if loop_line.clients.load(Ordering::Relaxed) >= MAX_CLIENTS {
                         // Closing it is the answer: nothing is read, no thread is spent on it.
                         continue;
                     }
-                    let (home, pin) = (loop_home.clone(), loop_pin.clone());
-                    let (stop, busy, sender, clients) = (
-                        loop_stop.clone(),
-                        loop_busy.clone(),
-                        loop_sender.clone(),
-                        loop_clients.clone(),
-                    );
-                    // Counted here, before the thread exists: waiting for the child to say it has
-                    // started is what lets a flood of sockets each get a thread of their own.
-                    clients.fetch_add(1, Ordering::Relaxed);
+                    let line = loop_line.clone();
+                    loop_line.clients.fetch_add(1, Ordering::Relaxed);
                     if let Err(error) = thread::Builder::new()
                         .name("horizon-import-client".into())
                         .spawn(move || {
-                            let _ = serve(stream, &home, &pin, &stop, &busy, &sender);
-                            clients.fetch_sub(1, Ordering::Relaxed);
+                            let _ = serve(stream, &line);
+                            line.clients.fetch_sub(1, Ordering::Relaxed);
                         })
                     {
                         log::warn!("Horizon: no thread for an upload: {error}");
-                        loop_clients.fetch_sub(1, Ordering::Relaxed);
+                        loop_line.clients.fetch_sub(1, Ordering::Relaxed);
                     }
                 }
             })?;
@@ -130,8 +156,7 @@ impl Session {
             port,
             pin,
             news,
-            stop,
-            busy,
+            line,
             thread: Some(thread),
         })
     }
@@ -155,7 +180,7 @@ impl Session {
     /// Whether an upload is arriving right now: the screen shows a bar rather than a promise, and a
     /// second sender gets `503`.
     pub fn uploading(&self) -> bool {
-        self.busy.load(Ordering::Relaxed)
+        self.line.busy.load(Ordering::Relaxed)
     }
 
     /// Everything the listener has said since the last frame.
@@ -170,7 +195,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.line.stop.store(true, Ordering::Relaxed);
         // The loop notices within one poll, so this returns in milliseconds and the port is shut --
         // not merely meant to be shut sometime soon.
         if let Some(thread) = self.thread.take() {
@@ -275,41 +300,38 @@ struct Request {
 }
 
 /// Answer one connection.
-fn serve(
-    mut stream: TcpStream,
-    home: &Path,
-    pin: &str,
-    stop: &AtomicBool,
-    busy: &AtomicBool,
-    sender: &mpsc::Sender<News>,
-) -> io::Result<()> {
+fn serve(mut stream: TcpStream, line: &Line) -> io::Result<()> {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let Some(request) = read_request(&mut stream)? else {
         return Ok(());
     };
-    if stop.load(Ordering::Relaxed) {
+    if line.stop.load(Ordering::Relaxed) {
         return Ok(());
     }
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/" | "/index.html") => respond(&mut stream, 200, "text/html", PAGE)?,
         ("GET", _) => respond(&mut stream, 404, "text/plain", "not found\n")?,
-        ("PUT" | "POST", "/upload") => upload(&mut stream, home, pin, stop, busy, sender, request)?,
+        ("PUT" | "POST", "/upload") => upload(&mut stream, line, request)?,
         _ => respond(&mut stream, 405, "text/plain", "use PUT /upload\n")?,
     }
     stream.flush()
 }
 
 /// Take the body to a file, then let it follow the same road as one dropped in over a cable.
-fn upload(
-    stream: &mut TcpStream,
-    home: &Path,
-    pin: &str,
-    stop: &AtomicBool,
-    busy: &AtomicBool,
-    sender: &mpsc::Sender<News>,
-    request: Request,
-) -> io::Result<()> {
-    if !same_code(pin, &request.pin) {
+fn upload(stream: &mut TcpStream, line: &Line, request: Request) -> io::Result<()> {
+    if line.guessed_out() {
+        // Right code or not, this session has been knocked at too often to keep answering. The
+        // screen still says what the cable route is, and a relaunch asks with new digits.
+        log::warn!("Horizon: too many wrong codes; the import page has stopped answering");
+        return respond(
+            stream,
+            403,
+            "text/plain",
+            "too many wrong codes. Use the folder over a cable, or restart the app for new ones.\n",
+        );
+    }
+    if !same_code(&line.pin, &request.pin) {
+        line.guesses.fetch_add(1, Ordering::Relaxed);
         log::warn!("Horizon: an upload was refused for the wrong code");
         return respond(
             stream,
@@ -326,7 +348,7 @@ fn upload(
             "that is larger than a phone will hold\n",
         );
     }
-    if busy.swap(true, Ordering::Relaxed) {
+    if line.busy.swap(true, Ordering::Relaxed) {
         return respond(
             stream,
             503,
@@ -340,7 +362,7 @@ fn upload(
             self.0.store(false, Ordering::Relaxed);
         }
     }
-    let _busy = Busy(busy);
+    let _busy = Busy(&line.busy);
 
     let name = sanitize(
         request
@@ -350,16 +372,16 @@ fn upload(
             .unwrap_or("upload")
             .trim_end_matches(".zip"),
     );
-    let part = home.join(".import").join(format!("{name}.zip.part"));
-    let archive = home.join(format!("{name}.zip"));
+    let part = line.home.join(".import").join(format!("{name}.zip.part"));
+    let archive = line.home.join(format!("{name}.zip"));
     // Everything that could refuse this has been refused, so the body is wanted: say so.
     if request.expect == "100-continue" {
         stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
     }
-    if let Err(error) = stream_body(stream, &part, request.length, stop, sender) {
+    if let Err(error) = stream_body(stream, &part, request.length, line) {
         let _ = fs::remove_file(&part);
         let message = format!("the upload did not finish: {error}");
-        let _ = sender.send(News::Refused {
+        let _ = line.sender.send(News::Refused {
             error: message.clone(),
         });
         return respond(stream, 400, "text/plain", &format!("{message}\n"));
@@ -370,11 +392,11 @@ fn upload(
         .and_then(|()| {
             Pack::open(&archive)
                 .map_err(|error| io::Error::other(error.to_string()))?
-                .install(home)
+                .install(&line.home)
                 .map_err(|error| io::Error::other(error.to_string()))
         })
         .inspect(|installed| {
-            let _ = sender.send(News::Installed(installed.clone()));
+            let _ = line.sender.send(News::Installed(installed.clone()));
         });
     match installed {
         Ok(installed) => respond(
@@ -390,7 +412,7 @@ fn upload(
             // Park it the way the startup scan does, so the same failure is not retried every launch.
             let _ = fs::rename(&archive, archive.with_extension("zip.failed"));
             let message = format!("the phone could not use that archive: {error}");
-            let _ = sender.send(News::Refused {
+            let _ = line.sender.send(News::Refused {
                 error: message.clone(),
             });
             respond(stream, 422, "text/plain", &format!("{message}\n"))
@@ -399,13 +421,7 @@ fn upload(
 }
 
 /// Copy exactly `length` bytes of the body into `part`, reporting each megabyte as it arrives.
-fn stream_body(
-    stream: &mut TcpStream,
-    part: &Path,
-    length: u64,
-    stop: &AtomicBool,
-    sender: &mpsc::Sender<News>,
-) -> io::Result<()> {
+fn stream_body(stream: &mut TcpStream, part: &Path, length: u64, line: &Line) -> io::Result<()> {
     if let Some(parent) = part.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -417,7 +433,7 @@ fn stream_body(
     let mut received = 0u64;
     let mut reported = 0u64;
     while received < length {
-        if stop.load(Ordering::Relaxed) {
+        if line.stop.load(Ordering::Relaxed) {
             // The game stopped waiting -- it has its files, or it is going away -- so this upload is
             // now writing into a folder nobody is about to read.
             return Err(io::Error::new(
@@ -437,7 +453,7 @@ fn stream_body(
         received += read as u64;
         if received - reported >= PROGRESS_STEP || received == length {
             reported = received;
-            let _ = sender.send(News::Progress {
+            let _ = line.sender.send(News::Progress {
                 received,
                 total: length,
             });
@@ -531,7 +547,7 @@ document.getElementById("send").onclick = () => {
 mod tests {
     use super::super::Kind;
     use super::*;
-    use std::{net::Shutdown, path::PathBuf};
+    use std::net::Shutdown;
 
     fn temp_home(tag: &str) -> PathBuf {
         let dir =
@@ -627,6 +643,45 @@ mod tests {
             assert!(reply.starts_with(&header(403)), "{pin:?} got {reply}");
         }
         assert!(!home.join("game.zip").exists());
+        assert!(!home.join("resources").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_session_that_has_been_guessed_at_answers_nobody() {
+        // Driven through `serve` on a socket of its own, because what is being tested is the budget:
+        // thirty knocks are already spent, and the thirty-first sender has the right code.
+        let home = temp_home("guessed-out");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let line = Line {
+            home: home.clone(),
+            pin: "481930".into(),
+            stop: AtomicBool::new(false),
+            busy: AtomicBool::new(false),
+            guesses: AtomicUsize::new(MAX_GUESSES),
+            clients: AtomicUsize::new(0),
+            sender: mpsc::channel().0,
+        };
+        // No body: the code is what is being spent here, and a socket closed after refusing one
+        // without reading what followed it would be a reset rather than an answer.
+        let request = "PUT /upload HTTP/1.1\r\nHost: phone\r\nX-Horizon-Pin: 481930\r\n\
+                       Content-Length: 0\r\n\r\n"
+            .as_bytes()
+            .to_vec();
+        thread::spawn(move || {
+            let _ = serve(server, &line);
+        });
+        let mut client = client;
+        client.write_all(&request).unwrap();
+        client.flush().unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).unwrap();
+        assert!(reply.starts_with(&header(403)), "{reply}");
+        assert!(reply.contains("too many wrong codes"), "{reply}");
+        assert!(!home.join("upload.zip").exists());
         assert!(!home.join("resources").exists());
         fs::remove_dir_all(home).unwrap();
     }

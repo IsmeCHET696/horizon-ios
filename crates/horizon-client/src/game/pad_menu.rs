@@ -851,17 +851,33 @@ impl Game<'_> {
 
     // ---- text fields ----
 
-    /// iPhone and iPad have no keyboard until one is asked for: it comes up while a text field has focus (a
-    /// server's address, chat, a sign...) and Horizon's own is not open over it, and goes away with the focus.
-    /// winit types its keys into the window as `KeyboardInput`, which the fields already read.
-    pub(super) fn sync_system_keyboard(&mut self) {
+    /// A text field anywhere has focus: `pad_typing`'s, or a title screen's (a server's name and address, a
+    /// world's name, the world search).
+    pub(super) fn field_focused(&mut self) -> bool {
         let title_field = self
             .title
             .as_mut()
             .is_some_and(|t| t.focused_field().is_some());
-        let want = cfg!(target_os = "ios")
-            && (title_field || self.pad_typing())
-            && self.pad.menu.osk.is_none();
+        title_field || self.pad_typing()
+    }
+
+    /// Ask for the system's keyboard again, whatever the last request did: a request iOS ignored (it can,
+    /// while a touch is being handled) is otherwise never repeated, as `sync_system_keyboard` only asks on a
+    /// change. The touch controls' keyboard button.
+    pub(super) fn show_system_keyboard(&mut self) {
+        self.pad.menu.osk = None;
+        self.pad.menu.system_keyboard = true;
+        if let Some(window) = &self.window {
+            window.set_ime_allowed(false);
+            window.set_ime_allowed(true);
+        }
+    }
+
+    /// iPhone and iPad have no keyboard until one is asked for: it comes up while a text field has focus (a
+    /// server's address, chat, a sign...) and Horizon's own is not open over it, and goes away with the focus.
+    /// winit types its keys into the window as `KeyboardInput`, which the fields already read.
+    pub(super) fn sync_system_keyboard(&mut self) {
+        let want = cfg!(target_os = "ios") && self.field_focused() && self.pad.menu.osk.is_none();
         if want != self.pad.menu.system_keyboard {
             self.pad.menu.system_keyboard = want;
             if let Some(window) = &self.window {

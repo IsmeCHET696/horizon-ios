@@ -91,6 +91,13 @@ pub fn close_rect(w: f32, h: f32) -> Rect {
     [w - s - 4.0, 4.0, s, s]
 }
 
+/// The keyboard button, left of the close button: over a focused text field, it asks for the system's
+/// keyboard again.
+pub fn keyboard_rect(w: f32, h: f32) -> Rect {
+    let c = close_rect(w, h);
+    [c[0] - c[2] - 4.0, c[1], c[2], c[3]]
+}
+
 /// The point is inside the rectangle.
 pub fn hit_rect(r: Rect, at: (f32, f32)) -> bool {
     contains(r, at)

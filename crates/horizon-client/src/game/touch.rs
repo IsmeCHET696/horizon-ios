@@ -246,11 +246,19 @@ impl Game<'_> {
                     && self
                         .touch_batch()
                         .is_some_and(|b| touch::hit_rect(touch::close_rect(b.width, b.height), at));
+                let on_keyboard = !on_close
+                    && self.touch_shown()
+                    && self.field_focused()
+                    && self.touch_batch().is_some_and(|b| {
+                        touch::hit_rect(touch::keyboard_rect(b.width, b.height), at)
+                    });
                 if on_close {
                     // What Escape does where the finger is (the pad's B).
                     if let Err(e) = self.pad_back() {
                         log::warn!("Horizon: touch close: {e}");
                     }
+                } else if on_keyboard {
+                    self.show_system_keyboard();
                 } else {
                     self.touch_pointer(event_loop, at);
                 }
@@ -260,7 +268,7 @@ impl Game<'_> {
                     frames: 0,
                     pressed: false,
                     lifted: false,
-                    closed: on_close,
+                    closed: on_close || on_keyboard,
                 });
             }
             TouchPhase::Moved => {
@@ -369,7 +377,8 @@ impl Game<'_> {
 
     // ---- drawing ----
 
-    /// The buttons over the HUD while playing: Pocket Edition's translucent grey squares, lighter while held.
+    /// The buttons over the HUD while playing: vanilla's button, a little see-through as Pocket Edition's
+    /// were, lit while held, with white marks shadowed like Minecraft's text.
     pub(super) fn draw_touch_controls(&self, batch: &mut HudBatch) {
         if !self.touch_shown() || !self.touch_playing() {
             return;
@@ -379,45 +388,89 @@ impl Game<'_> {
             if matches!(control, Control::Hotbar(_)) {
                 continue;
             }
-            let held = self.touch.fingers.held(control);
-            let face = if held {
-                rgba(200, 200, 200, 150)
-            } else {
-                rgba(150, 150, 150, 110)
-            };
-            let edge = rgba(40, 40, 40, 140);
-            batch.fill(atlas, r[0], r[1], r[2], r[3], edge);
-            batch.fill(atlas, r[0] + 1.0, r[1] + 1.0, r[2] - 2.0, r[3] - 2.0, face);
-            glyph(batch, atlas, control, r, rgba(60, 60, 60, 220));
+            touch_button(batch, atlas, r, self.touch.fingers.held(control));
+            shadowed(r, |r, color| glyph(batch, atlas, control, r, color));
         }
     }
 }
 
 impl Game<'_> {
-    /// The ✕ over a screen with no way out of its own on a touch screen (`touch_close_shown`).
-    pub(super) fn draw_touch_close(&self, batch: &mut HudBatch) {
-        if !self.touch_close_shown() {
-            return;
-        }
-        let atlas = &self.gui.atlas;
-        let r = touch::close_rect(batch.width, batch.height);
+    /// The buttons over a screen: ✕ where the screen has no way out of its own on a touch screen
+    /// (`touch_close_shown`), and ⌨ beside it while a text field has focus.
+    pub(super) fn draw_touch_close(&mut self, batch: &mut HudBatch) {
         let held = self.touch.menu.as_ref().is_some_and(|f| f.closed);
-        let face = if held {
-            rgba(200, 200, 200, 170)
-        } else {
-            rgba(150, 150, 150, 130)
-        };
-        batch.fill(atlas, r[0], r[1], r[2], r[3], rgba(40, 40, 40, 160));
-        batch.fill(atlas, r[0] + 1.0, r[1] + 1.0, r[2] - 2.0, r[3] - 2.0, face);
-        // Two diagonals of 2-pixel cells.
-        let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
-        let ink = rgba(40, 40, 40, 230);
-        for i in -3..=3 {
-            let d = i as f32 * 2.0;
-            batch.fill(atlas, cx + d - 1.0, cy + d - 1.0, 2.0, 2.0, ink);
-            batch.fill(atlas, cx - d - 1.0, cy + d - 1.0, 2.0, 2.0, ink);
+        let keyboard = self.touch_shown() && self.field_focused();
+        let atlas = &self.gui.atlas;
+        if self.touch_close_shown() {
+            let r = touch::close_rect(batch.width, batch.height);
+            touch_button(batch, atlas, r, held);
+            shadowed(r, |r, color| {
+                // Two diagonals of cells.
+                let u = cell_size(r);
+                let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
+                for i in -3..=3 {
+                    let d = i as f32 * u;
+                    batch.fill(atlas, cx + d - u / 2.0, cy + d - u / 2.0, u, u, color);
+                    batch.fill(atlas, cx - d - u / 2.0, cy + d - u / 2.0, u, u, color);
+                }
+            });
+        }
+        if keyboard {
+            let r = touch::keyboard_rect(batch.width, batch.height);
+            touch_button(batch, atlas, r, false);
+            shadowed(r, |r, color| {
+                // A keyboard: two rows of keys over a space bar.
+                let u = cell_size(r) * 0.75;
+                let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
+                for row in 0..2 {
+                    for key in 0..5 {
+                        let x = cx + (key as f32 - 2.5) * u * 1.6;
+                        let y = cy + (row as f32 - 1.5) * u * 1.6;
+                        batch.fill(atlas, x, y, u, u, color);
+                    }
+                }
+                batch.fill(atlas, cx - 2.5 * u, cy + 1.7 * u, 5.0 * u, u, color);
+            });
         }
     }
+}
+
+/// Vanilla's button sprite, nine-sliced to the touch button's size: highlighted while held, and see-through
+/// enough to keep the world behind it in sight.
+fn touch_button(
+    batch: &mut HudBatch,
+    atlas: &horizon_client::hud::HudAtlas,
+    r: touch::Rect,
+    held: bool,
+) {
+    let sprite = if held {
+        "gui/sprites/widget/button_highlighted"
+    } else {
+        "gui/sprites/widget/button"
+    };
+    let alpha = if held { 230 } else { 170 };
+    horizon_client::ui::nine_slice(
+        batch,
+        atlas,
+        sprite,
+        r[0],
+        r[1],
+        r[2],
+        r[3],
+        rgba(255, 255, 255, alpha),
+    );
+}
+
+/// The size of a mark's cell on a button `r`: two GUI pixels on the old 26-pixel buttons, growing with them.
+fn cell_size(r: touch::Rect) -> f32 {
+    (r[2] / 13.0).round().max(2.0)
+}
+
+/// Draw a mark twice, as Minecraft draws text: a dark copy a little down and right, then the white one.
+fn shadowed(r: touch::Rect, mut mark: impl FnMut(touch::Rect, u32)) {
+    let off = (cell_size(r) / 2.0).max(1.0);
+    mark([r[0] + off, r[1] + off, r[2], r[3]], rgba(63, 63, 63, 230));
+    mark(r, rgba(255, 255, 255, 240));
 }
 
 /// A button's mark, in cells of a few pixels centred on it.
@@ -429,8 +482,7 @@ fn glyph(
     color: u32,
 ) {
     let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
-    // The mark's pixel: two GUI pixels on the old 26-pixel buttons, growing with them.
-    let u = (r[2] / 13.0).round().max(2.0);
+    let u = cell_size(r);
     let cell = |batch: &mut HudBatch, x: f32, y: f32, w: f32, h: f32| {
         batch.fill(atlas, cx + x * u, cy + y * u, w * u, h * u, color);
     };

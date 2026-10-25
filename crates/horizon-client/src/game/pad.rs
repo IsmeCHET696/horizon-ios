@@ -26,7 +26,7 @@ pub(super) const HELP: &[&str] = &[
 #[derive(Default)]
 pub(super) struct Pads {
     /// The real controllers and the DualSense's output.
-    #[cfg(feature = "controllers")]
+    #[cfg(any(feature = "controllers", target_os = "ios"))]
     devices: hardware::Devices,
     /// The virtual pad of `horizon-ctl pad`.
     injected: PadState,
@@ -53,12 +53,17 @@ pub(super) struct Pads {
     health: HealthWatch,
 }
 
-#[cfg(feature = "controllers")]
+#[cfg(all(feature = "controllers", not(target_os = "ios")))]
+mod hardware;
+
+/// iPhone and iPad: GameController, whichever features the build has (gilrs has no iOS backend).
+#[cfg(target_os = "ios")]
+#[path = "pad/ios.rs"]
 mod hardware;
 
 /// A build without the `controllers` feature (the server build, which must not need libudev): no
 /// hardware pads, only `horizon-ctl pad`'s virtual one.
-#[cfg(not(feature = "controllers"))]
+#[cfg(not(any(feature = "controllers", target_os = "ios")))]
 mod hardware {
     use super::{super::Game, Pads};
     use horizon_client::gamepad::{PadState, Pulse, Rumble};

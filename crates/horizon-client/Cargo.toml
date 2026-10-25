@@ -64,6 +64,13 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 # crate already falls back to when no system clipboard can be reached.
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
+# Controllers on iPhone and iPad: Apple's GameController framework, which reads every pad iOS pairs (DualSense,
+# DualShock, Xbox, MFi) where gilrs has no backend (game/pad/ios.rs).
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6.3"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString"] }
+objc2-game-controller = { version = "0.3.2", default-features = false, features = ["std", "GCController", "GCDevice", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCControllerElement", "GCControllerButtonInput", "GCControllerAxisInput", "GCControllerDirectionPad"] }
+
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).
 rustix = { version = "1", default-features = false, features = ["std", "time"] }

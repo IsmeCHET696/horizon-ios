@@ -71,6 +71,8 @@ impl Loading {
             }
         };
         let session = if download.is_some() {
+            // On a phone the download shows in SwiftUI over this screen; it asks `download-state`.
+            horizon_ios_launcher::present_download();
             None
         } else {
             open_session(&home)
@@ -179,6 +181,44 @@ impl Loading {
             .map(|import| import.home)
             .unwrap_or_default();
         self.load_the_files_that_arrived(home)
+    }
+
+    /// The download, as the phone's SwiftUI download screen reads it (`download-state`): what it is doing and how
+    /// far along, `failed` with why, or `done` once there is nothing left to wait for.
+    pub(super) fn download_state(&self) -> serde_json::Value {
+        use horizon_client::import::download::Stage;
+        let Some(import) = &self.import else {
+            return serde_json::json!({ "phase": "done", "progress": self.progress.fraction() });
+        };
+        match import.download.as_ref().map(|d| d.stage()) {
+            Some(Stage::Downloading { received, total }) => serde_json::json!({
+                "phase": "downloading",
+                "received": received,
+                "total": total,
+                "version": horizon_core::VANILLA_VERSION,
+            }),
+            Some(Stage::Installing) => serde_json::json!({ "phase": "installing" }),
+            None => serde_json::json!({ "phase": "failed", "error": import.error }),
+        }
+    }
+
+    /// Try the download again after it failed (`download-retry`): it goes on from what arrived the last time.
+    pub(super) fn retry_download(&mut self) -> Result<()> {
+        let Some(import) = &mut self.import else {
+            return Ok(());
+        };
+        if import.download.is_some() {
+            return Ok(());
+        }
+        let url = horizon_client::import::download::url(horizon_core::VANILLA_VERSION);
+        import.download = Some(horizon_client::import::download::Download::start(
+            url,
+            import.home.clone(),
+        )?);
+        // The other doors close while it runs, as they were before the first try.
+        import.session = None;
+        import.error = None;
+        Ok(())
     }
 
     /// Why the loader found nothing to start, as the screen says it.

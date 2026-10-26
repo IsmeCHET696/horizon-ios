@@ -140,12 +140,25 @@ pub fn show() -> bool {
     false
 }
 
+/// Show the game files download over the game, in SwiftUI (packaging/ios/Launcher/DownloadView.swift): upright,
+/// with its progress, speed and time left, asked of the game with `download-state`. Shown whether or not the
+/// launcher is switched on, since it only needs the framework. False when this build or bundle has none, and the
+/// game's own download screen is all there is.
+pub fn present_download() -> bool {
+    #[cfg(target_os = "ios")]
+    return ios::call(ios::DOWNLOAD);
+    #[cfg(not(target_os = "ios"))]
+    false
+}
+
 #[cfg(target_os = "ios")]
 mod ios {
     use std::ffi::{CStr, CString, c_char, c_void};
 
     /// `horizon_launcher_present` in packaging/ios/Launcher/Present.swift.
     const SYMBOL: &CStr = c"horizon_launcher_present";
+    /// `horizon_download_present` in packaging/ios/Launcher/DownloadView.swift.
+    pub const DOWNLOAD: &CStr = c"horizon_download_present";
 
     /// How the launcher hears back: its context, and the answer as NUL-terminated UTF-8 JSON that lives
     /// only for the call.
@@ -183,8 +196,13 @@ mod ios {
     }
 
     pub fn present() -> bool {
+        call(SYMBOL)
+    }
+
+    /// Call `symbol` in the launcher framework with the bridge; false when there is no framework or symbol.
+    pub fn call(symbol_name: &CStr) -> bool {
         let Some(path) = framework() else {
-            log::info!("Horizon: no launcher in this bundle; starting at the title screen.");
+            log::info!("Horizon: no launcher framework in this bundle");
             return false;
         };
         // SAFETY: dlopen and dlsym on a framework Xcode built and signed into this bundle; the symbol is a
@@ -196,9 +214,9 @@ mod ios {
                 log::warn!("Horizon: the launcher framework did not load");
                 return false;
             }
-            let symbol = libc::dlsym(handle, SYMBOL.as_ptr());
+            let symbol = libc::dlsym(handle, symbol_name.as_ptr());
             if symbol.is_null() {
-                log::warn!("Horizon: the launcher framework has no {SYMBOL:?}");
+                log::warn!("Horizon: the launcher framework has no {symbol_name:?}");
                 return false;
             }
             let present: extern "C" fn(Submit) -> bool = std::mem::transmute(symbol);

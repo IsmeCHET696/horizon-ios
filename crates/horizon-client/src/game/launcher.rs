@@ -118,6 +118,8 @@ impl Game<'_> {
                     request.answer(&state.to_string());
                 }
                 "import" => start_import(request),
+                // The game is up: the download screen has nothing left to show.
+                "download-state" => request.answer(r#"{"phase":"done"}"#),
                 "launcher-start" => request.answer(r#"{"ok":true}"#),
                 "launcher-session" => session_request(request),
                 "launcher-world" => self.launcher_world(request),
@@ -321,6 +323,14 @@ impl Loading {
                         json!({ "phase": "loading", "progress": self.progress.fraction() })
                     };
                     request.answer(&state.to_string());
+                }
+                "download-state" => request.answer(&self.download_state().to_string()),
+                "download-retry" => {
+                    let answer = match self.retry_download() {
+                        Ok(()) => json!({ "ok": true }),
+                        Err(e) => json!({ "error": e.to_string() }),
+                    };
+                    request.answer(&answer.to_string());
                 }
                 "import" => start_import(request),
                 "launcher-session" => session_request(request),

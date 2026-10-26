@@ -47,7 +47,7 @@ private func present(attempts: Int) {
 }
 
 /// Ask the scene to turn to `orientations` now, rather than when the phone is next moved.
-private func turn(_ scene: UIWindowScene?, to orientations: UIInterfaceOrientationMask) {
+func turn(_ scene: UIWindowScene?, to orientations: UIInterfaceOrientationMask) {
     guard let scene else { return }
     for window in scene.windows {
         var top = window.rootViewController
@@ -60,7 +60,7 @@ private func turn(_ scene: UIWindowScene?, to orientations: UIInterfaceOrientati
 }
 
 /// The view controller of winit's window: the one the launcher is presented from.
-private func gameViewController() -> UIViewController? {
+func gameViewController() -> UIViewController? {
     let windows = UIApplication.shared.connectedScenes
         .compactMap { $0 as? UIWindowScene }
         .flatMap(\.windows)
